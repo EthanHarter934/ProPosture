@@ -1,13 +1,13 @@
 """
-Calibration Screen Module
+Calibration Panel Module
 
-Full 4-step calibration wizard UI. Guides the user through posture education,
-live camera preview with stability tracking, baseline capture, and confirmation.
-This is the most critical UX flow in the application.
+Embeddable 4-step calibration wizard frame. Guides the user through posture
+education, live camera preview with stability tracking, baseline capture,
+and confirmation. Designed to be embedded in the main window rather than
+opened as a separate toplevel.
 """
 
 import logging
-import threading
 import tkinter as tk
 from typing import Any, Callable, Optional
 
@@ -18,8 +18,6 @@ from PIL import Image, ImageTk
 
 from constants import (
     ALL_MEASUREMENTS,
-    CALIBRATION_WINDOW_HEIGHT,
-    CALIBRATION_WINDOW_WIDTH,
     CAMERA_FRAME_HEIGHT,
     CAMERA_FRAME_WIDTH,
     COLOR_ACCENT,
@@ -31,15 +29,15 @@ from constants import (
     STABILITY_THRESHOLD,
 )
 from core.calibration import CalibrationResult, CalibrationSession
-from core.pose_detector import DetectedLandmarks, PoseDetector
+from core.pose_detector import PoseDetector
 from core.posture_analyzer import PostureAnalyzer
 
 logger = logging.getLogger(__name__)
 
 
-class CalibrationScreen(ctk.CTkToplevel):
+class CalibrationPanel(ctk.CTkFrame):
     """
-    4-step calibration wizard window.
+    4-step calibration wizard embedded frame.
 
     Steps:
     1. Posture Education — explains good posture with canvas diagrams
@@ -54,21 +52,18 @@ class CalibrationScreen(ctk.CTkToplevel):
         camera_index: int = DEFAULT_CAMERA_INDEX,
         on_complete: Optional[Callable[[CalibrationResult], None]] = None,
         on_cancel: Optional[Callable[[], None]] = None,
+        **kwargs: Any,
     ) -> None:
         """
-        Initialize the calibration screen.
+        Initialize the calibration panel.
 
         Args:
-            parent: Parent window.
+            parent: Parent widget.
             camera_index: Webcam device index.
             on_complete: Callback when calibration is accepted.
-            on_cancel: Callback when calibration is cancelled.
+            on_cancel: Callback when calibration is cancelled/back pressed.
         """
-        super().__init__(parent)
-        self.title("ProPosture — Calibration")
-        self.geometry(f"{CALIBRATION_WINDOW_WIDTH}x{CALIBRATION_WINDOW_HEIGHT}")
-        self.resizable(False, False)
-        self.protocol("WM_DELETE_WINDOW", self._on_close)
+        super().__init__(parent, **kwargs)
 
         self._camera_index = camera_index
         self._on_complete = on_complete
@@ -80,16 +75,22 @@ class CalibrationScreen(ctk.CTkToplevel):
         self._running = False
         self._current_step = 0
 
-        self._frames: list[ctk.CTkFrame] = []
+        self._step_frames: list[ctk.CTkFrame] = []
         self._build_steps()
         self._show_step(0)
 
-        self.grab_set()
-        self.focus_set()
+    def set_camera_index(self, index: int) -> None:
+        """
+        Update the camera index for future captures.
+
+        Args:
+            index: New camera device index.
+        """
+        self._camera_index = index
 
     def _build_steps(self) -> None:
         """Build all four step frames."""
-        self._frames = [
+        self._step_frames = [
             self._build_education_step(),
             self._build_preview_step(),
             self._build_capture_step(),
@@ -103,9 +104,9 @@ class CalibrationScreen(ctk.CTkToplevel):
         Args:
             step: Step index (0-3).
         """
-        for i, frame in enumerate(self._frames):
+        for i, frame in enumerate(self._step_frames):
             if i == step:
-                frame.pack(fill="both", expand=True, padx=15, pady=15)
+                frame.pack(fill="both", expand=True, padx=10, pady=10)
             else:
                 frame.pack_forget()
 
@@ -117,6 +118,13 @@ class CalibrationScreen(ctk.CTkToplevel):
             self._stop_camera()
             self._populate_confirmation()
 
+    def reset_and_start(self) -> None:
+        """Reset the calibration flow and show step 1."""
+        self._stop_camera()
+        self._session.reset()
+        self._result = None
+        self._show_step(0)
+
     # ═══════════════════════════════════════════
     # STEP 1: POSTURE EDUCATION
     # ═══════════════════════════════════════════
@@ -124,6 +132,15 @@ class CalibrationScreen(ctk.CTkToplevel):
     def _build_education_step(self) -> ctk.CTkFrame:
         """Build the posture education frame with canvas diagrams."""
         frame = ctk.CTkFrame(self)
+
+        # Header with cancel/back button
+        header = ctk.CTkFrame(frame, fg_color="transparent")
+        header.pack(fill="x", padx=5, pady=(5, 0))
+        ctk.CTkButton(
+            header, text="←  Back to Dashboard", width=160,
+            font=ctk.CTkFont(size=13), fg_color="#7f8c8d",
+            hover_color="#95a5a6", command=self._on_back,
+        ).pack(side="left")
 
         title = ctk.CTkLabel(
             frame, text="Understanding Good Posture",
@@ -134,8 +151,7 @@ class CalibrationScreen(ctk.CTkToplevel):
         subtitle = ctk.CTkLabel(
             frame,
             text="Before calibrating, let's make sure you know what good posture looks like.",
-            font=ctk.CTkFont(size=13),
-            text_color="gray",
+            font=ctk.CTkFont(size=13), text_color="gray",
         )
         subtitle.pack(pady=(0, 10))
 
@@ -159,31 +175,28 @@ class CalibrationScreen(ctk.CTkToplevel):
             "✓  Feet flat on the floor",
         ]
         for tip in tips:
-            lbl = ctk.CTkLabel(
+            ctk.CTkLabel(
                 frame, text=tip,
                 font=ctk.CTkFont(size=14), anchor="w",
-            )
-            lbl.pack(fill="x", padx=40, pady=2)
+            ).pack(fill="x", padx=40, pady=2)
 
         warning_text = (
             "⚠️  Take a moment to adjust your chair, monitor height, and keyboard "
             "position BEFORE continuing. The posture you hold during calibration "
             "is what the app will try to maintain."
         )
-        warning = ctk.CTkLabel(
+        ctk.CTkLabel(
             frame, text=warning_text,
             font=ctk.CTkFont(size=12), text_color="#f39c12",
             wraplength=620, justify="left",
-        )
-        warning.pack(fill="x", padx=40, pady=(15, 10))
+        ).pack(fill="x", padx=40, pady=(15, 10))
 
-        btn = ctk.CTkButton(
+        ctk.CTkButton(
             frame, text="I've adjusted my setup — Continue",
             font=ctk.CTkFont(size=15, weight="bold"),
             height=45, fg_color=COLOR_ACCENT,
             command=lambda: self._show_step(1),
-        )
-        btn.pack(pady=(10, 5))
+        ).pack(pady=(10, 5))
 
         return frame
 
@@ -200,56 +213,31 @@ class CalibrationScreen(ctk.CTkToplevel):
 
     @staticmethod
     def _draw_good_posture(c: tk.Canvas, cx: int, base_y: int) -> None:
-        """
-        Draw a stick figure with good posture.
-
-        Args:
-            c: Canvas to draw on.
-            cx: Center x coordinate.
-            base_y: Baseline y coordinate (bottom).
-        """
+        """Draw a stick figure with good posture."""
         color = "#2ecc71"
-        # Head
-        c.create_oval(cx - 12, base_y - 155, cx + 12, base_y - 131, outline=color, width=2)
-        # Spine (straight vertical)
-        c.create_line(cx, base_y - 131, cx, base_y - 60, fill=color, width=2)
-        # Shoulders (level)
-        c.create_line(cx - 30, base_y - 115, cx + 30, base_y - 115, fill=color, width=2)
-        # Ears (level with head top, aligned with shoulders)
-        c.create_oval(cx - 17, base_y - 148, cx - 13, base_y - 142, outline=color, width=2)
-        c.create_oval(cx + 13, base_y - 148, cx + 17, base_y - 142, outline=color, width=2)
-        # Legs
-        c.create_line(cx, base_y - 60, cx - 20, base_y - 10, fill=color, width=2)
-        c.create_line(cx, base_y - 60, cx + 20, base_y - 10, fill=color, width=2)
-        # Chair outline
-        c.create_line(cx - 35, base_y - 60, cx + 35, base_y - 60, fill="#555", width=1)
-        c.create_line(cx + 35, base_y - 60, cx + 35, base_y - 130, fill="#555", width=1)
+        c.create_oval(cx-12, base_y-155, cx+12, base_y-131, outline=color, width=2)
+        c.create_line(cx, base_y-131, cx, base_y-60, fill=color, width=2)
+        c.create_line(cx-30, base_y-115, cx+30, base_y-115, fill=color, width=2)
+        c.create_oval(cx-17, base_y-148, cx-13, base_y-142, outline=color, width=2)
+        c.create_oval(cx+13, base_y-148, cx+17, base_y-142, outline=color, width=2)
+        c.create_line(cx, base_y-60, cx-20, base_y-10, fill=color, width=2)
+        c.create_line(cx, base_y-60, cx+20, base_y-10, fill=color, width=2)
+        c.create_line(cx-35, base_y-60, cx+35, base_y-60, fill="#555", width=1)
+        c.create_line(cx+35, base_y-60, cx+35, base_y-130, fill="#555", width=1)
 
     @staticmethod
     def _draw_bad_posture(c: tk.Canvas, cx: int, base_y: int) -> None:
-        """
-        Draw a stick figure with bad posture (forward head, uneven shoulders).
-
-        Args:
-            c: Canvas to draw on.
-            cx: Center x coordinate.
-            base_y: Baseline y coordinate (bottom).
-        """
+        """Draw a stick figure with bad posture (forward head, uneven shoulders)."""
         color = "#e74c3c"
-        # Head (forward)
-        c.create_oval(cx + 15, base_y - 145, cx + 39, base_y - 121, outline=color, width=2)
-        # Spine (curved forward)
-        c.create_line(cx, base_y - 60, cx + 5, base_y - 90,
-                      cx + 15, base_y - 110, cx + 27, base_y - 121,
+        c.create_oval(cx+15, base_y-145, cx+39, base_y-121, outline=color, width=2)
+        c.create_line(cx, base_y-60, cx+5, base_y-90,
+                      cx+15, base_y-110, cx+27, base_y-121,
                       fill=color, width=2, smooth=True)
-        # Shoulders (uneven)
-        c.create_line(cx - 25, base_y - 108, cx + 30, base_y - 115, fill=color, width=2)
-        # Legs
-        c.create_line(cx, base_y - 60, cx - 20, base_y - 10, fill=color, width=2)
-        c.create_line(cx, base_y - 60, cx + 20, base_y - 10, fill=color, width=2)
-        # Chair
-        c.create_line(cx - 35, base_y - 60, cx + 35, base_y - 60, fill="#555", width=1)
-        c.create_line(cx + 35, base_y - 60, cx + 35, base_y - 130, fill="#555", width=1)
+        c.create_line(cx-25, base_y-108, cx+30, base_y-115, fill=color, width=2)
+        c.create_line(cx, base_y-60, cx-20, base_y-10, fill=color, width=2)
+        c.create_line(cx, base_y-60, cx+20, base_y-10, fill=color, width=2)
+        c.create_line(cx-35, base_y-60, cx+35, base_y-60, fill="#555", width=1)
+        c.create_line(cx+35, base_y-60, cx+35, base_y-130, fill="#555", width=1)
 
     # ═══════════════════════════════════════════
     # STEP 2: CAMERA PREVIEW
@@ -265,7 +253,6 @@ class CalibrationScreen(ctk.CTkToplevel):
         )
         title.pack(pady=(10, 5))
 
-        # Camera feed label
         self._camera_label = ctk.CTkLabel(frame, text="Starting camera...")
         self._camera_label.pack(pady=5)
 
@@ -277,11 +264,10 @@ class CalibrationScreen(ctk.CTkToplevel):
         for name in ALL_MEASUREMENTS:
             row = ctk.CTkFrame(self._measures_frame, fg_color="transparent")
             row.pack(fill="x", pady=1)
-            lbl_name = ctk.CTkLabel(
+            ctk.CTkLabel(
                 row, text=f"{MEASUREMENT_DISPLAY_NAMES[name]}:",
                 font=ctk.CTkFont(size=12), width=160, anchor="w",
-            )
-            lbl_name.pack(side="left")
+            ).pack(side="left")
             lbl_val = ctk.CTkLabel(
                 row, text="—", font=ctk.CTkFont(size=12, weight="bold"),
                 width=100, anchor="w",
@@ -318,13 +304,11 @@ class CalibrationScreen(ctk.CTkToplevel):
                 font=ctk.CTkFont(size=11), anchor="w",
             ).pack(fill="x")
 
-        # Capture button
         self._capture_btn = ctk.CTkButton(
             frame, text="Capture Baseline",
             font=ctk.CTkFont(size=15, weight="bold"),
             height=42, fg_color=COLOR_ACCENT,
-            state="disabled",
-            command=self._start_capture,
+            state="disabled", command=self._start_capture,
         )
         self._capture_btn.pack(pady=(8, 5))
 
@@ -338,17 +322,15 @@ class CalibrationScreen(ctk.CTkToplevel):
         """Build the capture-in-progress frame."""
         frame = ctk.CTkFrame(self)
 
-        title = ctk.CTkLabel(
+        ctk.CTkLabel(
             frame, text="Capturing Baseline...",
             font=ctk.CTkFont(size=22, weight="bold"),
-        )
-        title.pack(pady=(30, 10))
+        ).pack(pady=(30, 10))
 
-        subtitle = ctk.CTkLabel(
+        ctk.CTkLabel(
             frame, text="Hold still! Capturing 90 frames (3 seconds).",
             font=ctk.CTkFont(size=14), text_color="gray",
-        )
-        subtitle.pack(pady=(0, 20))
+        ).pack(pady=(0, 20))
 
         self._capture_camera_label = ctk.CTkLabel(frame, text="")
         self._capture_camera_label.pack(pady=5)
@@ -372,15 +354,13 @@ class CalibrationScreen(ctk.CTkToplevel):
         """Build the confirmation frame with quality report."""
         frame = ctk.CTkFrame(self)
 
-        title = ctk.CTkLabel(
+        ctk.CTkLabel(
             frame, text="Calibration Complete",
             font=ctk.CTkFont(size=22, weight="bold"),
-        )
-        title.pack(pady=(20, 10))
+        ).pack(pady=(20, 10))
 
         self._quality_label = ctk.CTkLabel(
-            frame, text="", font=ctk.CTkFont(size=14),
-            wraplength=600,
+            frame, text="", font=ctk.CTkFont(size=14), wraplength=600,
         )
         self._quality_label.pack(pady=5)
 
@@ -400,16 +380,14 @@ class CalibrationScreen(ctk.CTkToplevel):
             btn_frame, text="Accept Baseline",
             font=ctk.CTkFont(size=14, weight="bold"),
             fg_color=COLOR_GOOD, hover_color="#27ae60",
-            width=160, height=40,
-            command=self._accept,
+            width=160, height=40, command=self._accept,
         ).pack(side="left", padx=8)
 
         ctk.CTkButton(
             btn_frame, text="Recapture",
             font=ctk.CTkFont(size=14),
             fg_color=COLOR_WARNING, hover_color="#e67e22",
-            width=140, height=40,
-            command=self._recapture,
+            width=140, height=40, command=self._recapture,
         ).pack(side="left", padx=8)
 
         ctk.CTkButton(
@@ -439,11 +417,9 @@ class CalibrationScreen(ctk.CTkToplevel):
                 text_color=COLOR_WARNING,
             )
 
-        # Clear old results
         for widget in self._results_frame.winfo_children():
             widget.destroy()
 
-        # Header
         header = ctk.CTkFrame(self._results_frame, fg_color="transparent")
         header.pack(fill="x", padx=10, pady=(10, 5))
         ctk.CTkLabel(header, text="Measurement", width=180,
@@ -460,7 +436,8 @@ class CalibrationScreen(ctk.CTkToplevel):
             row = ctk.CTkFrame(self._results_frame, fg_color="transparent")
             row.pack(fill="x", padx=10, pady=2)
             ctk.CTkLabel(row, text=MEASUREMENT_DISPLAY_NAMES[name],
-                         width=180, anchor="w", font=ctk.CTkFont(size=12)).pack(side="left")
+                         width=180, anchor="w",
+                         font=ctk.CTkFont(size=12)).pack(side="left")
             ctk.CTkLabel(row, text=f"{mean:.3f}", width=100,
                          font=ctk.CTkFont(size=12)).pack(side="left")
             ctk.CTkLabel(row, text=f"{std:.3f}", width=100,
@@ -468,7 +445,8 @@ class CalibrationScreen(ctk.CTkToplevel):
             status_text = "✓" if is_ok else "⚠"
             status_color = COLOR_GOOD if is_ok else COLOR_WARNING
             ctk.CTkLabel(row, text=status_text, width=80,
-                         font=ctk.CTkFont(size=14), text_color=status_color).pack(side="left")
+                         font=ctk.CTkFont(size=14),
+                         text_color=status_color).pack(side="left")
 
         warnings_text = "\n".join(quality.warnings) if quality.warnings else ""
         self._warning_label.configure(text=warnings_text)
@@ -515,7 +493,7 @@ class CalibrationScreen(ctk.CTkToplevel):
             self.after(33, self._update_camera)
             return
 
-        frame = cv2.flip(frame, 1)  # Mirror
+        frame = cv2.flip(frame, 1)
         landmarks = self._detector.detect(frame) if self._detector else None
 
         if landmarks is not None:
@@ -532,12 +510,7 @@ class CalibrationScreen(ctk.CTkToplevel):
         self.after(33, self._update_camera)
 
     def _display_frame(self, frame: np.ndarray) -> None:
-        """
-        Convert an OpenCV frame and display it in the appropriate label.
-
-        Args:
-            frame: BGR image from OpenCV.
-        """
+        """Convert an OpenCV frame and display it in the appropriate label."""
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         img = Image.fromarray(rgb)
         img = img.resize((420, 315), Image.Resampling.LANCZOS)
@@ -552,12 +525,7 @@ class CalibrationScreen(ctk.CTkToplevel):
         target_label._photo = photo  # Prevent garbage collection
 
     def _update_measurement_display(self, measurements: Any) -> None:
-        """
-        Update the measurement value labels.
-
-        Args:
-            measurements: PostureMeasurements from the current frame.
-        """
+        """Update the measurement value labels."""
         values = measurements.to_dict()
         for name, label in self._measure_labels.items():
             label.configure(text=f"{values[name]:.3f}")
@@ -605,10 +573,10 @@ class CalibrationScreen(ctk.CTkToplevel):
             self._show_step(1)
 
     def _accept(self) -> None:
-        """Accept the calibration and close the wizard."""
+        """Accept the calibration and return to dashboard."""
         if self._result is not None and self._on_complete:
             self._on_complete(self._result)
-        self._cleanup_and_close()
+        self._stop_camera()
 
     def _recapture(self) -> None:
         """Return to the camera preview to recapture."""
@@ -616,14 +584,12 @@ class CalibrationScreen(ctk.CTkToplevel):
         self._result = None
         self._show_step(1)
 
-    def _on_close(self) -> None:
-        """Handle the window close button."""
+    def _on_back(self) -> None:
+        """Handle back button — return to dashboard."""
+        self._stop_camera()
         if self._on_cancel:
             self._on_cancel()
-        self._cleanup_and_close()
 
-    def _cleanup_and_close(self) -> None:
-        """Stop camera, release resources, and destroy the window."""
+    def cleanup(self) -> None:
+        """Stop camera and release resources (call when hiding panel)."""
         self._stop_camera()
-        self.grab_release()
-        self.destroy()

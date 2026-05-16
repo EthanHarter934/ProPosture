@@ -1,9 +1,10 @@
 """
-Settings Window Module
+Settings Panel Module
 
-Provides controls for coach personality, sensitivity multipliers, alert timing,
-camera selection, appearance, and startup configuration. All changes are saved
-immediately to the user's settings profile.
+Embeddable settings frame that provides controls for coach personality,
+sensitivity multipliers, alert timing, camera selection, appearance,
+and startup configuration. Designed to be embedded in the main window
+rather than opened as a separate toplevel. All changes persist immediately.
 """
 
 import logging
@@ -30,63 +31,120 @@ from constants import (
     MIN_ALERT_DELAY_SEC,
     MIN_COOLDOWN_SEC,
     MIN_SENSITIVITY_MULTIPLIER,
-    SETTINGS_WINDOW_HEIGHT,
-    SETTINGS_WINDOW_WIDTH,
     STARTUP_REGISTRY_KEY,
     STARTUP_REGISTRY_NAME,
 )
-from data.profile_manager import AppSettings
+from data.profile_manager import AppSettings, CalibrationProfile
 
 logger = logging.getLogger(__name__)
 
 
-class SettingsWindow(ctk.CTkToplevel):
+class SettingsPanel(ctk.CTkFrame):
     """
-    Settings configuration window.
+    Embeddable settings frame.
 
     Provides controls for all user-adjustable settings including coach
     personality, sensitivity, timing, camera, appearance, and startup.
+    Designed to sit inside the main window's content area.
     """
 
     def __init__(
         self,
         parent: Any,
         settings: AppSettings,
+        profile: Optional[CalibrationProfile] = None,
         on_save: Optional[Callable[[AppSettings], None]] = None,
+        on_profile_save: Optional[Callable[[CalibrationProfile], None]] = None,
         on_recalibrate: Optional[Callable[[], None]] = None,
         on_delete_calibration: Optional[Callable[[], None]] = None,
         on_test_voice: Optional[Callable[[str], None]] = None,
+        on_back: Optional[Callable[[], None]] = None,
+        **kwargs: Any,
     ) -> None:
         """
-        Initialize the settings window.
+        Initialize the settings panel.
 
         Args:
-            parent: Parent window.
+            parent: Parent widget.
             settings: Current application settings.
+            profile: Current calibration profile (for sensitivity multipliers).
             on_save: Callback when settings change.
+            on_profile_save: Callback when sensitivity multipliers change.
             on_recalibrate: Callback for recalibrate button.
             on_delete_calibration: Callback for delete calibration button.
             on_test_voice: Callback for test voice button.
+            on_back: Callback to return to dashboard.
         """
-        super().__init__(parent)
-        self.title("ProPosture — Settings")
-        self.geometry(f"{SETTINGS_WINDOW_WIDTH}x{SETTINGS_WINDOW_HEIGHT}")
-        self.resizable(False, False)
+        super().__init__(parent, **kwargs)
 
         self._settings = settings
+        self._profile = profile
         self._on_save = on_save
+        self._on_profile_save = on_profile_save
         self._on_recalibrate = on_recalibrate
         self._on_delete_calibration = on_delete_calibration
         self._on_test_voice = on_test_voice
+        self._on_back = on_back
+
+        self._sensitivity_sliders: dict[str, ctk.CTkSlider] = {}
+        self._sensitivity_labels: dict[str, ctk.CTkLabel] = {}
 
         self._build_ui()
-        self.grab_set()
-        self.focus_set()
+
+    def update_refs(
+        self, settings: AppSettings, profile: Optional[CalibrationProfile]
+    ) -> None:
+        """
+        Update the settings and profile references (called when re-shown).
+
+        Args:
+            settings: Current app settings.
+            profile: Current calibration profile.
+        """
+        self._settings = settings
+        self._profile = profile
+        self._refresh_ui_values()
+
+    def _refresh_ui_values(self) -> None:
+        """Refresh all UI widget values from current settings."""
+        self._coach_var.set(self._settings.coach_personality)
+        self._delay_slider.set(self._settings.alert_delay_sec)
+        self._delay_label.configure(text=f"{self._settings.alert_delay_sec:.0f}s")
+        self._cooldown_slider.set(self._settings.cooldown_sec)
+        self._cooldown_label.configure(text=f"{self._settings.cooldown_sec:.0f}s")
+        self._camera_var.set(str(self._settings.camera_index))
+        self._theme_var.set("Dark" if self._settings.dark_mode else "Light")
+        self._startup_var.set(self._settings.launch_at_startup)
+
+        if self._profile is not None:
+            for name in ALL_MEASUREMENTS:
+                val = self._profile.sensitivity_multipliers.get(
+                    name, DEFAULT_SENSITIVITY_MULTIPLIER
+                )
+                if name in self._sensitivity_sliders:
+                    self._sensitivity_sliders[name].set(val)
+                if name in self._sensitivity_labels:
+                    self._sensitivity_labels[name].configure(text=f"{val:.1f}")
 
     def _build_ui(self) -> None:
         """Build the full settings UI."""
+        # Header with back button
+        header = ctk.CTkFrame(self, fg_color="transparent")
+        header.pack(fill="x", padx=10, pady=(10, 5))
+
+        ctk.CTkButton(
+            header, text="←  Back to Dashboard", width=160,
+            font=ctk.CTkFont(size=13), fg_color="#7f8c8d",
+            hover_color="#95a5a6", command=self._go_back,
+        ).pack(side="left")
+
+        ctk.CTkLabel(
+            header, text="Settings",
+            font=ctk.CTkFont(size=22, weight="bold"),
+        ).pack(side="left", padx=15)
+
         scroll = ctk.CTkScrollableFrame(self)
-        scroll.pack(fill="both", expand=True, padx=10, pady=10)
+        scroll.pack(fill="both", expand=True, padx=10, pady=(0, 10))
 
         self._build_coach_section(scroll)
         self._build_sensitivity_section(scroll)
@@ -95,6 +153,11 @@ class SettingsWindow(ctk.CTkToplevel):
         self._build_appearance_section(scroll)
         self._build_startup_section(scroll)
         self._build_actions_section(scroll)
+
+    def _go_back(self) -> None:
+        """Navigate back to the dashboard."""
+        if self._on_back:
+            self._on_back()
 
     # ═══════════════════════════════════════════
     # COACH PERSONALITY
@@ -108,18 +171,15 @@ class SettingsWindow(ctk.CTkToplevel):
         row.pack(fill="x", pady=5)
 
         self._coach_var = ctk.StringVar(value=self._settings.coach_personality)
-        menu = ctk.CTkOptionMenu(
+        ctk.CTkOptionMenu(
             row, variable=self._coach_var,
             values=["standard", "drill_sergeant"],
-            command=self._on_coach_change,
-            width=200,
-        )
-        menu.pack(side="left", padx=(0, 10))
+            command=self._on_coach_change, width=200,
+        ).pack(side="left", padx=(0, 10))
 
         ctk.CTkButton(
             row, text="Test Voice", width=100,
-            fg_color=COLOR_ACCENT,
-            command=self._test_voice,
+            fg_color=COLOR_ACCENT, command=self._test_voice,
         ).pack(side="left")
 
     def _on_coach_change(self, value: str) -> None:
@@ -146,30 +206,29 @@ class SettingsWindow(ctk.CTkToplevel):
             font=ctk.CTkFont(size=11), text_color="gray",
         ).pack(anchor="w", pady=(0, 5))
 
-        self._sensitivity_sliders: dict[str, ctk.CTkSlider] = {}
-        self._sensitivity_labels: dict[str, ctk.CTkLabel] = {}
-
-        profile = self._get_profile_multipliers()
-
         for name in ALL_MEASUREMENTS:
-            current_val = profile.get(name, DEFAULT_SENSITIVITY_MULTIPLIER)
+            current_val = DEFAULT_SENSITIVITY_MULTIPLIER
+            if self._profile is not None:
+                current_val = self._profile.sensitivity_multipliers.get(
+                    name, DEFAULT_SENSITIVITY_MULTIPLIER
+                )
             self._build_slider_row(
                 section, name, MEASUREMENT_DISPLAY_NAMES[name],
                 MIN_SENSITIVITY_MULTIPLIER, MAX_SENSITIVITY_MULTIPLIER,
                 current_val, self._on_sensitivity_change,
             )
 
-    def _get_profile_multipliers(self) -> dict[str, float]:
-        """Load current sensitivity multipliers from the profile manager."""
-        # Settings doesn't store multipliers — they're in the calibration profile.
-        # We'll pass defaults; the main window will merge with profile data.
-        return {name: DEFAULT_SENSITIVITY_MULTIPLIER for name in ALL_MEASUREMENTS}
-
     def _on_sensitivity_change(self, name: str, value: float) -> None:
-        """Handle sensitivity slider change."""
+        """Handle sensitivity slider change and persist to profile."""
         rounded = round(value, 1)
         if name in self._sensitivity_labels:
             self._sensitivity_labels[name].configure(text=f"{rounded:.1f}")
+
+        # Update profile multipliers and save
+        if self._profile is not None:
+            self._profile.sensitivity_multipliers[name] = rounded
+            if self._on_profile_save:
+                self._on_profile_save(self._profile)
 
     # ═══════════════════════════════════════════
     # TIMING SLIDERS
@@ -179,7 +238,6 @@ class SettingsWindow(ctk.CTkToplevel):
         """Build alert delay and cooldown sliders."""
         section = self._make_section(parent, "⏱️  Alert Timing")
 
-        # Alert delay
         row_delay = ctk.CTkFrame(section, fg_color="transparent")
         row_delay.pack(fill="x", pady=5)
         ctk.CTkLabel(row_delay, text="Alert Delay (sec):", width=160,
@@ -189,7 +247,6 @@ class SettingsWindow(ctk.CTkToplevel):
             row_delay, text=f"{self._settings.alert_delay_sec:.0f}s",
             width=50, font=ctk.CTkFont(size=12, weight="bold"),
         )
-
         self._delay_slider = ctk.CTkSlider(
             row_delay, from_=MIN_ALERT_DELAY_SEC, to=MAX_ALERT_DELAY_SEC,
             number_of_steps=int(MAX_ALERT_DELAY_SEC - MIN_ALERT_DELAY_SEC),
@@ -199,7 +256,6 @@ class SettingsWindow(ctk.CTkToplevel):
         self._delay_slider.pack(side="left", padx=5)
         self._delay_label.pack(side="left")
 
-        # Cooldown
         row_cool = ctk.CTkFrame(section, fg_color="transparent")
         row_cool.pack(fill="x", pady=5)
         ctk.CTkLabel(row_cool, text="Cooldown (sec):", width=160,
@@ -209,7 +265,6 @@ class SettingsWindow(ctk.CTkToplevel):
             row_cool, text=f"{self._settings.cooldown_sec:.0f}s",
             width=50, font=ctk.CTkFont(size=12, weight="bold"),
         )
-
         self._cooldown_slider = ctk.CTkSlider(
             row_cool, from_=MIN_COOLDOWN_SEC, to=MAX_COOLDOWN_SEC,
             number_of_steps=int((MAX_COOLDOWN_SEC - MIN_COOLDOWN_SEC) / 5),
@@ -243,7 +298,6 @@ class SettingsWindow(ctk.CTkToplevel):
 
         row = ctk.CTkFrame(section, fg_color="transparent")
         row.pack(fill="x", pady=5)
-
         ctk.CTkLabel(row, text="Camera Index:", width=120,
                      anchor="w", font=ctk.CTkFont(size=13)).pack(side="left")
 
@@ -252,8 +306,7 @@ class SettingsWindow(ctk.CTkToplevel):
         ctk.CTkOptionMenu(
             row, variable=self._camera_var,
             values=cam_values,
-            command=self._on_camera_change,
-            width=100,
+            command=self._on_camera_change, width=100,
         ).pack(side="left")
 
     def _on_camera_change(self, value: str) -> None:
@@ -271,7 +324,6 @@ class SettingsWindow(ctk.CTkToplevel):
 
         row = ctk.CTkFrame(section, fg_color="transparent")
         row.pack(fill="x", pady=5)
-
         ctk.CTkLabel(row, text="Theme:", width=120,
                      anchor="w", font=ctk.CTkFont(size=13)).pack(side="left")
 
@@ -281,8 +333,7 @@ class SettingsWindow(ctk.CTkToplevel):
         ctk.CTkOptionMenu(
             row, variable=self._theme_var,
             values=["Dark", "Light"],
-            command=self._on_theme_change,
-            width=100,
+            command=self._on_theme_change, width=100,
         ).pack(side="left")
 
     def _on_theme_change(self, value: str) -> None:
@@ -330,7 +381,9 @@ class SettingsWindow(ctk.CTkToplevel):
             )
             if enabled:
                 exe_path = sys.executable
-                winreg.SetValueEx(key, STARTUP_REGISTRY_NAME, 0, winreg.REG_SZ, exe_path)
+                winreg.SetValueEx(
+                    key, STARTUP_REGISTRY_NAME, 0, winreg.REG_SZ, exe_path
+                )
                 logger.info("Added to Windows startup: %s", exe_path)
             else:
                 try:
@@ -361,8 +414,7 @@ class SettingsWindow(ctk.CTkToplevel):
 
         ctk.CTkButton(
             row1, text="Recalibrate", width=140,
-            fg_color=COLOR_ACCENT,
-            command=self._recalibrate,
+            fg_color=COLOR_ACCENT, command=self._recalibrate,
         ).pack(side="left")
 
         row2 = ctk.CTkFrame(section, fg_color="transparent")
@@ -377,21 +429,13 @@ class SettingsWindow(ctk.CTkToplevel):
     def _reset_defaults(self) -> None:
         """Reset all settings to defaults."""
         self._settings = AppSettings()
-        self._coach_var.set(self._settings.coach_personality)
-        self._delay_slider.set(self._settings.alert_delay_sec)
-        self._delay_label.configure(text=f"{self._settings.alert_delay_sec:.0f}s")
-        self._cooldown_slider.set(self._settings.cooldown_sec)
-        self._cooldown_label.configure(text=f"{self._settings.cooldown_sec:.0f}s")
-        self._camera_var.set(str(self._settings.camera_index))
-        self._theme_var.set("Dark" if self._settings.dark_mode else "Light")
-        self._startup_var.set(self._settings.launch_at_startup)
+        self._refresh_ui_values()
         self._save()
 
     def _recalibrate(self) -> None:
         """Trigger recalibration."""
         if self._on_recalibrate:
             self._on_recalibrate()
-        self.destroy()
 
     def _delete_and_recalibrate(self) -> None:
         """Delete calibration data and trigger recalibration."""
@@ -399,7 +443,6 @@ class SettingsWindow(ctk.CTkToplevel):
             self._on_delete_calibration()
         if self._on_recalibrate:
             self._on_recalibrate()
-        self.destroy()
 
     # ═══════════════════════════════════════════
     # HELPERS
@@ -466,8 +509,7 @@ class SettingsWindow(ctk.CTkToplevel):
         slider = ctk.CTkSlider(
             row, from_=min_val, to=max_val,
             number_of_steps=int((max_val - min_val) * 10),
-            command=lambda v, n=name: callback(n, v),
-            width=180,
+            command=lambda v, n=name: callback(n, v), width=180,
         )
         slider.set(current)
         self._sensitivity_sliders[name] = slider

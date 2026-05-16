@@ -1,9 +1,10 @@
 """
 Main Window Module
 
-Primary dashboard showing monitoring status, live posture reading, session
-statistics, and quick-access controls. Manages the detection loop on a
-background thread and coordinates with the alert engine and voice manager.
+Single-window application that embeds the dashboard, calibration, and settings
+views in one frame container. Switches between views without opening separate
+windows. Manages the detection loop on a background thread and coordinates
+with the alert engine and voice manager.
 """
 
 import logging
@@ -29,7 +30,6 @@ from constants import (
     COLOR_WARNING,
     MAIN_WINDOW_HEIGHT,
     MAIN_WINDOW_WIDTH,
-    MEASURE_FORWARD_HEAD_RATIO,
     PRIVACY_NOTE,
     SNOOZE_DURATION_SEC,
     STATUS_BAD,
@@ -46,13 +46,18 @@ from data.profile_manager import AppSettings, CalibrationProfile, ProfileManager
 
 logger = logging.getLogger(__name__)
 
+# View identifiers
+VIEW_DASHBOARD = "dashboard"
+VIEW_CALIBRATION = "calibration"
+VIEW_SETTINGS = "settings"
+
 
 class MainWindow(ctk.CTk):
     """
-    Primary application dashboard window.
+    Single-window application with embedded dashboard, calibration, and settings.
 
-    Displays monitoring status, posture reading, session stats, and camera
-    preview. Runs the detection pipeline on a background thread.
+    All views live inside a content container. Switching views hides the
+    current frame and shows the target frame — no separate windows.
     """
 
     def __init__(
@@ -78,8 +83,7 @@ class MainWindow(ctk.CTk):
         self._settings = settings
         self._profile = profile
 
-        # Core components (initialized later)
-        self._detector: Optional[PoseDetector] = None
+        # Core components
         self._analyzer = PostureAnalyzer()
         self._alert_engine = AlertEngine(
             alert_delay=settings.alert_delay_sec,
@@ -87,7 +91,7 @@ class MainWindow(ctk.CTk):
         )
         self._voice_manager = VoiceManager(personality=settings.coach_personality)
 
-        # State
+        # Detection state
         self._monitoring = False
         self._stop_event = threading.Event()
         self._detection_thread: Optional[threading.Thread] = None
@@ -105,28 +109,70 @@ class MainWindow(ctk.CTk):
 
         # Tray icon reference (set externally)
         self.tray_icon: Any = None
-
-        # Callbacks for tray
         self.on_quit_callback: Optional[Any] = None
 
-        self._build_ui()
+        # Current view tracking
+        self._current_view: str = VIEW_DASHBOARD
 
-    def _build_ui(self) -> None:
-        """Build the dashboard UI layout."""
-        self._build_header()
-        self._build_status_section()
-        self._build_camera_section()
-        self._build_stats_section()
-        self._build_controls()
-        self._build_footer()
+        # Build the container and all views
+        self._content = ctk.CTkFrame(self, fg_color="transparent")
+        self._content.pack(fill="both", expand=True)
+
+        self._views: dict[str, ctk.CTkFrame] = {}
+        self._build_dashboard_view()
+        self._build_calibration_view()
+        self._build_settings_view()
+
+        self._show_view(VIEW_DASHBOARD)
 
     # ═══════════════════════════════════════════
-    # HEADER
+    # VIEW SWITCHING
     # ═══════════════════════════════════════════
 
-    def _build_header(self) -> None:
-        """Build the app header with title."""
-        header = ctk.CTkFrame(self, fg_color="transparent")
+    def _show_view(self, view_name: str) -> None:
+        """
+        Switch to the specified view, hiding all others.
+
+        Args:
+            view_name: One of VIEW_DASHBOARD, VIEW_CALIBRATION, VIEW_SETTINGS.
+        """
+        # Clean up current view if needed
+        if self._current_view == VIEW_CALIBRATION and view_name != VIEW_CALIBRATION:
+            self._calibration_panel.cleanup()
+
+        for name, frame in self._views.items():
+            if name == view_name:
+                frame.pack(fill="both", expand=True)
+            else:
+                frame.pack_forget()
+
+        self._current_view = view_name
+
+        # Refresh settings view when showing it
+        if view_name == VIEW_SETTINGS:
+            self._settings_panel.update_refs(self._settings, self._profile)
+
+        logger.debug("Switched to view: %s", view_name)
+
+    # ═══════════════════════════════════════════
+    # DASHBOARD VIEW
+    # ═══════════════════════════════════════════
+
+    def _build_dashboard_view(self) -> None:
+        """Build the dashboard view frame."""
+        frame = ctk.CTkFrame(self._content, fg_color="transparent")
+        self._views[VIEW_DASHBOARD] = frame
+
+        self._build_header(frame)
+        self._build_status_section(frame)
+        self._build_camera_section(frame)
+        self._build_stats_section(frame)
+        self._build_controls(frame)
+        self._build_footer(frame)
+
+    def _build_header(self, parent: ctk.CTkFrame) -> None:
+        """Build the app header with title and status."""
+        header = ctk.CTkFrame(parent, fg_color="transparent")
         header.pack(fill="x", padx=20, pady=(15, 5))
 
         ctk.CTkLabel(
@@ -146,13 +192,9 @@ class MainWindow(ctk.CTk):
         )
         self._status_text.pack(side="right")
 
-    # ═══════════════════════════════════════════
-    # STATUS SECTION
-    # ═══════════════════════════════════════════
-
-    def _build_status_section(self) -> None:
+    def _build_status_section(self, parent: ctk.CTkFrame) -> None:
         """Build the posture status display."""
-        frame = ctk.CTkFrame(self)
+        frame = ctk.CTkFrame(parent)
         frame.pack(fill="x", padx=20, pady=8)
 
         ctk.CTkLabel(
@@ -173,13 +215,9 @@ class MainWindow(ctk.CTk):
         )
         self._posture_detail.pack(pady=(0, 10))
 
-    # ═══════════════════════════════════════════
-    # CAMERA PREVIEW
-    # ═══════════════════════════════════════════
-
-    def _build_camera_section(self) -> None:
+    def _build_camera_section(self, parent: ctk.CTkFrame) -> None:
         """Build the optional camera preview section."""
-        self._camera_frame = ctk.CTkFrame(self)
+        self._camera_frame = ctk.CTkFrame(parent)
 
         self._preview_toggle = ctk.CTkSwitch(
             self._camera_frame, text="Show Camera Preview",
@@ -209,13 +247,9 @@ class MainWindow(ctk.CTk):
             self._camera_label.pack_forget()
             self._camera_label.configure(image=None, text="Camera preview off")
 
-    # ═══════════════════════════════════════════
-    # SESSION STATS
-    # ═══════════════════════════════════════════
-
-    def _build_stats_section(self) -> None:
+    def _build_stats_section(self, parent: ctk.CTkFrame) -> None:
         """Build session statistics display."""
-        frame = ctk.CTkFrame(self)
+        frame = ctk.CTkFrame(parent)
         frame.pack(fill="x", padx=20, pady=8)
 
         ctk.CTkLabel(
@@ -234,19 +268,7 @@ class MainWindow(ctk.CTk):
     def _make_stat(
         parent: ctk.CTkFrame, title: str, value: str, row: int, col: int
     ) -> ctk.CTkLabel:
-        """
-        Create a stat display widget.
-
-        Args:
-            parent: Parent frame.
-            title: Stat title.
-            value: Initial value text.
-            row: Grid row.
-            col: Grid column.
-
-        Returns:
-            The value label for later updates.
-        """
+        """Create a stat display widget."""
         cell = ctk.CTkFrame(parent, fg_color="transparent")
         cell.grid(row=row, column=col, padx=20, pady=5, sticky="nsew")
         parent.columnconfigure(col, weight=1)
@@ -263,13 +285,9 @@ class MainWindow(ctk.CTk):
         val_lbl.pack()
         return val_lbl
 
-    # ═══════════════════════════════════════════
-    # CONTROLS
-    # ═══════════════════════════════════════════
-
-    def _build_controls(self) -> None:
+    def _build_controls(self, parent: ctk.CTkFrame) -> None:
         """Build the quick-access control buttons."""
-        frame = ctk.CTkFrame(self, fg_color="transparent")
+        frame = ctk.CTkFrame(parent, fg_color="transparent")
         frame.pack(fill="x", padx=20, pady=8)
 
         self._monitor_btn = ctk.CTkButton(
@@ -305,16 +323,55 @@ class MainWindow(ctk.CTk):
             width=120, command=self.open_calibration,
         ).pack(side="left", expand=True, fill="x", padx=(3, 0))
 
-    # ═══════════════════════════════════════════
-    # FOOTER
-    # ═══════════════════════════════════════════
-
-    def _build_footer(self) -> None:
+    def _build_footer(self, parent: ctk.CTkFrame) -> None:
         """Build the privacy notice footer."""
         ctk.CTkLabel(
-            self, text=PRIVACY_NOTE,
+            parent, text=PRIVACY_NOTE,
             font=ctk.CTkFont(size=10), text_color="gray",
         ).pack(side="bottom", pady=8)
+
+    # ═══════════════════════════════════════════
+    # CALIBRATION VIEW
+    # ═══════════════════════════════════════════
+
+    def _build_calibration_view(self) -> None:
+        """Build the calibration view using the CalibrationPanel."""
+        from ui.calibration_screen import CalibrationPanel
+
+        frame = ctk.CTkFrame(self._content, fg_color="transparent")
+        self._views[VIEW_CALIBRATION] = frame
+
+        self._calibration_panel = CalibrationPanel(
+            frame,
+            camera_index=self._settings.camera_index,
+            on_complete=self._on_calibration_complete,
+            on_cancel=self._on_calibration_cancel,
+        )
+        self._calibration_panel.pack(fill="both", expand=True)
+
+    # ═══════════════════════════════════════════
+    # SETTINGS VIEW
+    # ═══════════════════════════════════════════
+
+    def _build_settings_view(self) -> None:
+        """Build the settings view using the SettingsPanel."""
+        from ui.settings_window import SettingsPanel
+
+        frame = ctk.CTkFrame(self._content, fg_color="transparent")
+        self._views[VIEW_SETTINGS] = frame
+
+        self._settings_panel = SettingsPanel(
+            frame,
+            settings=self._settings,
+            profile=self._profile,
+            on_save=self._on_settings_saved,
+            on_profile_save=self._on_profile_saved,
+            on_recalibrate=self.open_calibration,
+            on_delete_calibration=self._delete_calibration,
+            on_test_voice=self._test_voice,
+            on_back=lambda: self._show_view(VIEW_DASHBOARD),
+        )
+        self._settings_panel.pack(fill="both", expand=True)
 
     # ═══════════════════════════════════════════
     # MONITORING LIFECYCLE
@@ -375,12 +432,7 @@ class MainWindow(ctk.CTk):
         logger.info("Monitoring stopped")
 
     def _detection_loop(self) -> None:
-        """
-        Background detection loop.
-
-        Captures frames, detects landmarks, analyzes posture, and checks
-        for alerts. Runs until _stop_event is set.
-        """
+        """Background detection loop — capture, detect, analyze, alert."""
         try:
             self._cap = cv2.VideoCapture(self._settings.camera_index)
             self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_FRAME_WIDTH)
@@ -402,12 +454,7 @@ class MainWindow(ctk.CTk):
                 self._cap = None
 
     def _run_detection(self, detector: PoseDetector) -> None:
-        """
-        Core detection loop body.
-
-        Args:
-            detector: Initialized PoseDetector instance.
-        """
+        """Core detection loop body."""
         while not self._stop_event.is_set():
             if self._cap is None or not self._cap.isOpened():
                 break
@@ -435,15 +482,7 @@ class MainWindow(ctk.CTk):
             time.sleep(0.033)
 
     def _evaluate_posture(self, measurements: Any) -> PostureStatus:
-        """
-        Evaluate posture against the calibrated baseline.
-
-        Args:
-            measurements: Current frame's PostureMeasurements.
-
-        Returns:
-            PostureStatus with deviations.
-        """
+        """Evaluate posture against the calibrated baseline."""
         if self._profile is None:
             with self._lock:
                 self._current_status = STATUS_NO_DETECTION
@@ -462,18 +501,12 @@ class MainWindow(ctk.CTk):
         return status
 
     def _process_alerts(self, status: PostureStatus) -> None:
-        """
-        Check for and fire alerts based on posture status.
-
-        Args:
-            status: Current posture evaluation.
-        """
+        """Check for and fire alerts based on posture status."""
         alert = self._alert_engine.check(status)
         if alert is not None:
             self._voice_manager.speak_alert(alert)
             self._alert_count += 1
 
-        # Track good posture streak
         if status.overall_status == STATUS_GOOD:
             streak = time.time() - self._good_streak_start
             if streak > self._longest_good_streak:
@@ -505,12 +538,7 @@ class MainWindow(ctk.CTk):
             self._update_camera_preview(frame)
 
     def _update_posture_display(self, status: str) -> None:
-        """
-        Update the posture status indicator.
-
-        Args:
-            status: Current posture status string.
-        """
+        """Update the posture status indicator."""
         color_map = {
             STATUS_GOOD: COLOR_GOOD,
             STATUS_WARNING: COLOR_WARNING,
@@ -541,15 +569,7 @@ class MainWindow(ctk.CTk):
 
     @staticmethod
     def _format_duration(seconds: float) -> str:
-        """
-        Format seconds into M:SS or H:MM:SS string.
-
-        Args:
-            seconds: Duration in seconds.
-
-        Returns:
-            Formatted time string.
-        """
+        """Format seconds into M:SS or H:MM:SS string."""
         total = int(seconds)
         hours = total // 3600
         minutes = (total % 3600) // 60
@@ -560,12 +580,7 @@ class MainWindow(ctk.CTk):
         return f"{minutes}:{secs:02d}"
 
     def _update_camera_preview(self, frame: np.ndarray) -> None:
-        """
-        Update the camera preview label with the current frame.
-
-        Args:
-            frame: BGR image from the detection thread.
-        """
+        """Update the camera preview label with the current frame."""
         try:
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             img = Image.fromarray(rgb)
@@ -580,18 +595,12 @@ class MainWindow(ctk.CTk):
             logger.debug("Failed to update camera preview")
 
     def _update_header_status(self, text: str, color: str) -> None:
-        """
-        Update the header status indicator.
-
-        Args:
-            text: Status text (e.g. "Active", "Paused").
-            color: Color for the status dot.
-        """
+        """Update the header status indicator."""
         self._status_text.configure(text=text)
         self._status_dot.configure(text_color=color)
 
     # ═══════════════════════════════════════════
-    # PUBLIC ACTIONS
+    # PUBLIC NAVIGATION
     # ═══════════════════════════════════════════
 
     def snooze(self) -> None:
@@ -610,41 +619,25 @@ class MainWindow(ctk.CTk):
             self._update_header_status("Paused", COLOR_WARNING)
 
     def open_settings(self) -> None:
-        """Open the settings window."""
-        from ui.settings_window import SettingsWindow
-        SettingsWindow(
-            self,
-            settings=self._settings,
-            on_save=self._on_settings_saved,
-            on_recalibrate=self.open_calibration,
-            on_delete_calibration=self._delete_calibration,
-            on_test_voice=self._test_voice,
-        )
+        """Switch to the settings view."""
+        self._show_view(VIEW_SETTINGS)
 
     def open_calibration(self) -> None:
-        """Open the calibration wizard."""
-        from ui.calibration_screen import CalibrationScreen
+        """Switch to the calibration view."""
         was_monitoring = self._monitoring
         if was_monitoring:
             self.stop_monitoring()
 
-        CalibrationScreen(
-            self,
-            camera_index=self._settings.camera_index,
-            on_complete=lambda result: self._on_calibration_complete(result, was_monitoring),
-            on_cancel=lambda: self._on_calibration_cancel(was_monitoring),
-        )
+        self._calibration_panel.set_camera_index(self._settings.camera_index)
+        self._calibration_panel.reset_and_start()
+        self._show_view(VIEW_CALIBRATION)
 
-    def _on_calibration_complete(self, result: Any, resume: bool) -> None:
-        """
-        Handle calibration completion.
+    # ═══════════════════════════════════════════
+    # CALLBACKS
+    # ═══════════════════════════════════════════
 
-        Args:
-            result: CalibrationResult from the calibration session.
-            resume: Whether to resume monitoring after calibration.
-        """
-        from data.profile_manager import CalibrationProfile
-
+    def _on_calibration_complete(self, result: Any) -> None:
+        """Handle calibration completion."""
         profile = CalibrationProfile(
             captured_at=result.captured_at,
             baseline_means=result.baseline.means,
@@ -657,32 +650,26 @@ class MainWindow(ctk.CTk):
         self._pm.save_profile(profile)
         self._profile = profile
         logger.info("Calibration saved")
+        self._show_view(VIEW_DASHBOARD)
 
-        if resume:
-            self.start_monitoring()
+    def _on_calibration_cancel(self) -> None:
+        """Handle calibration cancellation — return to dashboard."""
+        self._show_view(VIEW_DASHBOARD)
 
-    def _on_calibration_cancel(self, resume: bool) -> None:
-        """
-        Handle calibration cancellation.
-
-        Args:
-            resume: Whether to resume monitoring.
-        """
-        if resume and self._profile is not None:
-            self.start_monitoring()
-
-    def _on_settings_saved(self, settings: Any) -> None:
-        """
-        Handle settings save.
-
-        Args:
-            settings: Updated AppSettings.
-        """
+    def _on_settings_saved(self, settings: AppSettings) -> None:
+        """Handle settings save — persist and apply."""
         self._settings = settings
         self._pm.save_settings(settings)
         self._alert_engine.alert_delay = settings.alert_delay_sec
         self._alert_engine.cooldown = settings.cooldown_sec
         self._voice_manager.personality = settings.coach_personality
+        logger.debug("Settings saved and applied")
+
+    def _on_profile_saved(self, profile: CalibrationProfile) -> None:
+        """Handle profile save (sensitivity multiplier changes)."""
+        self._profile = profile
+        self._pm.save_profile(profile)
+        logger.debug("Profile sensitivity multipliers saved")
 
     def _delete_calibration(self) -> None:
         """Delete calibration data."""
@@ -691,12 +678,7 @@ class MainWindow(ctk.CTk):
         self.stop_monitoring()
 
     def _test_voice(self, personality: str) -> None:
-        """
-        Test the selected voice personality.
-
-        Args:
-            personality: Coach personality key to test.
-        """
+        """Test the selected voice personality."""
         old = self._voice_manager.personality
         self._voice_manager.personality = personality
         self._voice_manager.speak_text(
@@ -723,6 +705,7 @@ class MainWindow(ctk.CTk):
         """Fully quit the application."""
         logger.info("Application shutting down")
         self.stop_monitoring()
+        self._calibration_panel.cleanup()
         self._voice_manager.shutdown()
 
         if self.tray_icon is not None:

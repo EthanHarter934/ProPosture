@@ -77,9 +77,9 @@ FRAME_INTERVAL_MS: int = 1000 // TARGET_FPS  # ~33ms
 
 CALIBRATION_VERSION: int = 1
 CALIBRATION_CAPTURE_FRAMES: int = 90  # 3 seconds at 30 fps
-STABILITY_WINDOW_FRAMES: int = 90
-STABILITY_THRESHOLD: float = 0.85  # 0.0–1.0 to consider user "stable"
-HIGH_VARIANCE_THRESHOLD: float = 3.0  # Flag quality warning if std > this
+STABILITY_WINDOW_FRAMES: int = 30  # 1 second of frames for stability check
+STABILITY_THRESHOLD: float = 0.55  # 0.0–1.0 to consider user "stable"
+HIGH_VARIANCE_THRESHOLD: float = 5.0  # Flag quality warning if std > this
 
 # ═══════════════════════════════════════════════
 # SENSITIVITY DEFAULTS (std dev multipliers)
@@ -216,8 +216,8 @@ COACH_LINES: dict[str, dict[str, list[str]]] = {
 # ═══════════════════════════════════════════════
 
 WINDOW_TITLE: str = f"{APP_NAME} v{APP_VERSION}"
-MAIN_WINDOW_WIDTH: int = 520
-MAIN_WINDOW_HEIGHT: int = 680
+MAIN_WINDOW_WIDTH: int = 780
+MAIN_WINDOW_HEIGHT: int = 750
 SETTINGS_WINDOW_WIDTH: int = 500
 SETTINGS_WINDOW_HEIGHT: int = 700
 CALIBRATION_WINDOW_WIDTH: int = 750

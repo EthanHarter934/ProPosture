@@ -152,32 +152,37 @@ class CalibrationSession:
         """
         Compute stability from a window of measurement frames.
 
+        Uses absolute standard deviation with per-measurement thresholds.
+        More lenient than CV-based approach — only requires the user to
+        be reasonably still, not perfectly motionless.
+
         Args:
             frames: List of measurement dictionaries.
 
         Returns:
             Stability score 0.0–1.0.
         """
-        total_cv = 0.0
-        count = 0
+        # Per-measurement "acceptable jitter" thresholds.
+        # These are generous — even with natural body sway you should pass.
+        jitter_thresholds = {
+            "shoulder_angle": 2.0,       # degrees
+            "forward_head_ratio": 0.05,  # ratio
+            "head_tilt_angle": 2.0,      # degrees
+            "neck_angle": 3.0,           # degrees
+        }
 
+        scores: list[float] = []
         for name in ALL_MEASUREMENTS:
             values = np.array([f[name] for f in frames])
             std = float(np.std(values))
-            mean = float(np.mean(np.abs(values)))
+            threshold = jitter_thresholds.get(name, 2.0)
 
-            if mean < 1e-6:
-                cv = std  # Use raw std when mean is near zero
-            else:
-                cv = std / mean
+            # Score: 1.0 if std < threshold/2, linear drop to 0.0 at 2*threshold
+            ratio = std / threshold
+            score = max(0.0, min(1.0, 1.0 - ratio))
+            scores.append(score)
 
-            total_cv += cv
-            count += 1
-
-        avg_cv = total_cv / max(count, 1)
-        # Map CV to stability: CV=0 → score=1.0, CV≥0.3 → score=0.0
-        score = max(0.0, min(1.0, 1.0 - (avg_cv / 0.3)))
-        return score
+        return sum(scores) / max(len(scores), 1)
 
     def start_capture(self) -> None:
         """Begin capturing frames for baseline computation."""
