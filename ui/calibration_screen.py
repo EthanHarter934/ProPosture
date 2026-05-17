@@ -20,6 +20,8 @@ from constants import (
     ALL_MEASUREMENTS,
     CAMERA_FRAME_HEIGHT,
     CAMERA_FRAME_WIDTH,
+    CAMERA_THUMBNAIL_HEIGHT,
+    CAMERA_THUMBNAIL_WIDTH,
     COLOR_ACCENT,
     COLOR_BAD,
     COLOR_GOOD,
@@ -74,6 +76,10 @@ class CalibrationPanel(ctk.CTkFrame):
         self._result: Optional[CalibrationResult] = None
         self._running = False
         self._current_step = 0
+
+        # Create a scrollable frame to hold the step frames
+        self._scroll = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        self._scroll.pack(fill="both", expand=True)
 
         self._step_frames: list[ctk.CTkFrame] = []
         self._build_steps()
@@ -131,7 +137,7 @@ class CalibrationPanel(ctk.CTkFrame):
 
     def _build_education_step(self) -> ctk.CTkFrame:
         """Build the posture education frame with canvas diagrams."""
-        frame = ctk.CTkFrame(self)
+        frame = ctk.CTkFrame(self._scroll)
 
         # Header with cancel/back button
         header = ctk.CTkFrame(frame, fg_color="transparent")
@@ -245,7 +251,7 @@ class CalibrationPanel(ctk.CTkFrame):
 
     def _build_preview_step(self) -> ctk.CTkFrame:
         """Build the camera preview frame with landmark overlay."""
-        frame = ctk.CTkFrame(self)
+        frame = ctk.CTkFrame(self._scroll)
 
         title = ctk.CTkLabel(
             frame, text="Camera Preview — Hold Good Posture",
@@ -320,7 +326,7 @@ class CalibrationPanel(ctk.CTkFrame):
 
     def _build_capture_step(self) -> ctk.CTkFrame:
         """Build the capture-in-progress frame."""
-        frame = ctk.CTkFrame(self)
+        frame = ctk.CTkFrame(self._scroll)
 
         ctk.CTkLabel(
             frame, text="Capturing Baseline...",
@@ -352,7 +358,7 @@ class CalibrationPanel(ctk.CTkFrame):
 
     def _build_confirmation_step(self) -> ctk.CTkFrame:
         """Build the confirmation frame with quality report."""
-        frame = ctk.CTkFrame(self)
+        frame = ctk.CTkFrame(self._scroll)
 
         ctk.CTkLabel(
             frame, text="Calibration Complete",
@@ -466,8 +472,6 @@ class CalibrationPanel(ctk.CTkFrame):
                 self._cap = cv2.VideoCapture(self._camera_index, cv2.CAP_DSHOW)
             else:
                 self._cap = cv2.VideoCapture(self._camera_index)
-            self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_FRAME_WIDTH)
-            self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_FRAME_HEIGHT)
             self._detector = PoseDetector()
             self._session.reset()
             self._running = True
@@ -517,7 +521,8 @@ class CalibrationPanel(ctk.CTkFrame):
         """Convert an OpenCV frame and display it in the appropriate label."""
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         img = Image.fromarray(rgb)
-        photo = ctk.CTkImage(light_image=img, size=(480, 360))
+        img.thumbnail((CAMERA_THUMBNAIL_WIDTH, CAMERA_THUMBNAIL_HEIGHT), Image.Resampling.LANCZOS)
+        photo = ctk.CTkImage(light_image=img, size=img.size)
 
         target_label = (
             self._capture_camera_label

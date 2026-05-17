@@ -437,24 +437,24 @@ class SettingsPanel(ctk.CTkFrame):
         row1.pack(fill="x", pady=5)
 
         ctk.CTkButton(
-            row1, text="Reset to Defaults", width=180,
+            row1, text="Reset to Defaults",
             fg_color="#7f8c8d", hover_color="#95a5a6",
             command=self._reset_defaults,
-        ).pack(side="left", padx=(0, 10))
+        ).pack(side="left", fill="x", expand=True, padx=(0, 10))
 
         ctk.CTkButton(
-            row1, text="Recalibrate", width=140,
+            row1, text="Recalibrate",
             fg_color=COLOR_ACCENT, command=self._recalibrate,
-        ).pack(side="left")
+        ).pack(side="left", fill="x", expand=True)
 
         row2 = ctk.CTkFrame(section, fg_color="transparent")
         row2.pack(fill="x", pady=5)
 
         ctk.CTkButton(
-            row2, text="Delete Calibration & Recalibrate", width=280,
+            row2, text="Delete Calibration & Recalibrate",
             fg_color=COLOR_BAD, hover_color="#c0392b",
             command=self._delete_and_recalibrate,
-        ).pack(side="left")
+        ).pack(fill="x", expand=True)
 
     def _reset_defaults(self) -> None:
         """Reset all settings to defaults."""
@@ -462,6 +462,13 @@ class SettingsPanel(ctk.CTkFrame):
             set_launch_at_startup(False)
 
         self._settings = AppSettings()
+        
+        if self._profile is not None:
+            for name in ALL_MEASUREMENTS:
+                self._profile.sensitivity_multipliers[name] = DEFAULT_SENSITIVITY_MULTIPLIER
+            if self._on_profile_save:
+                self._on_profile_save(self._profile)
+
         self._refresh_ui_values()
         self._save()
 

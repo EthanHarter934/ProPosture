@@ -77,7 +77,8 @@ class MainWindow(ctk.CTk):
         super().__init__()
         self.title(WINDOW_TITLE)
         self.geometry(f"{MAIN_WINDOW_WIDTH}x{MAIN_WINDOW_HEIGHT}")
-        self.resizable(False, False)
+        self.minsize(MAIN_WINDOW_WIDTH, MAIN_WINDOW_HEIGHT)
+        self.resizable(True, True)
 
         self._pm = profile_manager
         self._settings = settings
@@ -164,7 +165,7 @@ class MainWindow(ctk.CTk):
 
     def _build_dashboard_view(self) -> None:
         """Build the dashboard view frame."""
-        frame = ctk.CTkFrame(self._content, fg_color="transparent")
+        frame = ctk.CTkScrollableFrame(self._content, fg_color="transparent")
         self._views[VIEW_DASHBOARD] = frame
 
         self._build_header(frame)
@@ -443,8 +444,6 @@ class MainWindow(ctk.CTk):
                 self._cap = cv2.VideoCapture(self._settings.camera_index, cv2.CAP_DSHOW)
             else:
                 self._cap = cv2.VideoCapture(self._settings.camera_index)
-            self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_FRAME_WIDTH)
-            self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_FRAME_HEIGHT)
             detector = PoseDetector()
         except Exception:
             logger.exception("Failed to start detection")
@@ -590,10 +589,8 @@ class MainWindow(ctk.CTk):
         try:
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             img = Image.fromarray(rgb)
-            photo = ctk.CTkImage(
-                light_image=img, 
-                size=(CAMERA_THUMBNAIL_WIDTH, CAMERA_THUMBNAIL_HEIGHT)
-            )
+            img.thumbnail((CAMERA_THUMBNAIL_WIDTH, CAMERA_THUMBNAIL_HEIGHT), Image.Resampling.LANCZOS)
+            photo = ctk.CTkImage(light_image=img, size=img.size)
             self._camera_label.configure(image=photo, text="")
             self._camera_label._photo = photo
         except Exception:

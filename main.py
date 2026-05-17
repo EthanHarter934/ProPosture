@@ -7,8 +7,12 @@ and starts the main window. Handles graceful shutdown on exit.
 """
 
 import logging
+import os
 import sys
 from datetime import datetime, timedelta
+
+# Suppress MediaPipe C++ warnings (like the NORM_RECT warning) before imports
+os.environ["GLOG_minloglevel"] = "2"
 
 import customtkinter as ctk
 
