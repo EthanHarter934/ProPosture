@@ -100,11 +100,10 @@ FRAME_INTERVAL_MS: int = 1000 // TARGET_FPS  # ~33ms
 # CALIBRATION
 # ═══════════════════════════════════════════════
 
-CALIBRATION_VERSION: int = 1
+CALIBRATION_VERSION: int = 2
 CALIBRATION_CAPTURE_FRAMES: int = 90  # 3 seconds at 30 fps
 STABILITY_WINDOW_FRAMES: int = 30  # 1 second of frames for stability check
 STABILITY_THRESHOLD: float = 0.55  # 0.0–1.0 to consider user "stable"
-HIGH_VARIANCE_THRESHOLD: float = 5.0  # Flag quality warning if std > this
 
 # ═══════════════════════════════════════════════
 # SENSITIVITY DEFAULTS (std dev multipliers)
@@ -171,6 +170,24 @@ MEASUREMENT_DISPLAY_NAMES: dict[str, str] = {
     MEASURE_FORWARD_HEAD_RATIO: "Forward Head Ratio",
     MEASURE_HEAD_TILT_ANGLE: "Head Tilt Angle",
     MEASURE_NECK_ANGLE: "Neck Angle",
+}
+
+# Minimum tolerances for posture classification at the default sensitivity.
+# These prevent very stable calibrations from creating near-zero thresholds
+# that classify ordinary landmark jitter as bad posture.
+POSTURE_TOLERANCE_FLOORS: dict[str, float] = {
+    MEASURE_SHOULDER_ANGLE: 4.0,        # degrees
+    MEASURE_FORWARD_HEAD_RATIO: 0.12,   # ratio of shoulder width
+    MEASURE_HEAD_TILT_ANGLE: 4.0,       # degrees
+    MEASURE_NECK_ANGLE: 8.0,            # degrees
+}
+
+# Maximum acceptable raw jitter during calibration capture.
+CALIBRATION_VARIANCE_LIMITS: dict[str, float] = {
+    MEASURE_SHOULDER_ANGLE: 3.0,        # degrees
+    MEASURE_FORWARD_HEAD_RATIO: 0.08,   # ratio of shoulder width
+    MEASURE_HEAD_TILT_ANGLE: 3.0,       # degrees
+    MEASURE_NECK_ANGLE: 6.0,            # degrees
 }
 
 # ═══════════════════════════════════════════════

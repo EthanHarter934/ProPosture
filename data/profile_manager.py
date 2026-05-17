@@ -41,7 +41,7 @@ class CalibrationProfile:
         calibration_version: Schema version for future migrations.
         captured_at: ISO timestamp of when calibration was captured.
         baseline_means: Dict of measurement name → baseline mean.
-        baseline_stds: Dict of measurement name → baseline std dev.
+        baseline_stds: Dict of measurement name → baseline jitter estimate.
         sensitivity_multipliers: Dict of measurement name → multiplier.
     """
 

@@ -1,28 +1,34 @@
 """
 Posture Analyzer Module
 
-Pure-math module that computes the four posture measurements from detected
-landmarks and compares them against a calibrated baseline. Contains no state
-and no I/O — only geometry calculations.
+Pure-math module that computes posture measurements from detected landmarks
+and classifies them against a calibrated baseline. Contains no state and no
+I/O — only geometry calculations.
 """
+
+from __future__ import annotations
 
 import logging
 import math
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from constants import (
     ALL_MEASUREMENTS,
+    DEFAULT_SENSITIVITY_MULTIPLIER,
     MEASURE_FORWARD_HEAD_RATIO,
     MEASURE_HEAD_TILT_ANGLE,
     MEASURE_NECK_ANGLE,
     MEASURE_SHOULDER_ANGLE,
+    POSTURE_TOLERANCE_FLOORS,
     STATUS_BAD,
     STATUS_GOOD,
     STATUS_WARNING,
     WARNING_THRESHOLD_RATIO,
 )
-from core.pose_detector import DetectedLandmarks, LandmarkPoint
+
+if TYPE_CHECKING:
+    from core.pose_detector import DetectedLandmarks, LandmarkPoint
 
 logger = logging.getLogger(__name__)
 
@@ -63,10 +69,13 @@ class MeasurementDeviation:
         measurement_name: Which measurement this deviation is for.
         current_value: The current frame's value.
         baseline_mean: The calibrated baseline mean.
-        baseline_std: The calibrated baseline std dev.
+        baseline_std: The calibrated baseline jitter estimate.
         multiplier: The user's sensitivity multiplier.
+        tolerance: The effective allowed deviation before bad posture.
         deviation_ratio: How many "threshold units" the value deviates.
             0.0 = at baseline, 1.0 = at alert threshold.
+        raw_delta: Signed current - baseline difference.
+        relevant_delta: The portion of raw_delta considered posturally worse.
     """
 
     measurement_name: str
@@ -74,7 +83,10 @@ class MeasurementDeviation:
     baseline_mean: float
     baseline_std: float
     multiplier: float
+    tolerance: float
     deviation_ratio: float
+    raw_delta: float
+    relevant_delta: float
 
 
 @dataclass
@@ -143,7 +155,7 @@ class PostureAnalyzer:
         Args:
             current: Current frame's posture measurements.
             baseline: Dict of measurement name → baseline mean.
-            std_devs: Dict of measurement name → baseline std dev.
+            std_devs: Dict of measurement name → baseline jitter estimate.
             multipliers: Dict of measurement name → sensitivity multiplier.
 
         Returns:
@@ -173,18 +185,16 @@ class PostureAnalyzer:
             name: Measurement name.
             current: Current frame's value.
             mean: Baseline mean.
-            std: Baseline standard deviation.
+            std: Baseline standard deviation or robust jitter estimate.
             multiplier: User's sensitivity multiplier.
 
         Returns:
             MeasurementDeviation with computed deviation ratio.
         """
-        threshold = std * multiplier
-        if threshold < 1e-6:
-            threshold = 1e-6  # Avoid division by zero
-
-        absolute_deviation = abs(current - mean)
-        ratio = absolute_deviation / threshold
+        tolerance = PostureAnalyzer._compute_tolerance(name, std, multiplier)
+        raw_delta = current - mean
+        relevant_delta = PostureAnalyzer._compute_relevant_delta(name, raw_delta)
+        ratio = relevant_delta / tolerance
 
         return MeasurementDeviation(
             measurement_name=name,
@@ -192,8 +202,55 @@ class PostureAnalyzer:
             baseline_mean=mean,
             baseline_std=std,
             multiplier=multiplier,
+            tolerance=tolerance,
             deviation_ratio=ratio,
+            raw_delta=raw_delta,
+            relevant_delta=relevant_delta,
         )
+
+    @staticmethod
+    def _compute_tolerance(name: str, std: float, multiplier: float) -> float:
+        """
+        Compute the effective deviation tolerance for a measurement.
+
+        The old classifier used only `std * multiplier`. During a steady
+        calibration that value can be tiny, so normal MediaPipe jitter becomes
+        "bad posture". The new classifier keeps the user's sensitivity control
+        but floors each measurement at a practical minimum tolerance.
+
+        Args:
+            name: Measurement name.
+            std: Calibrated standard deviation or robust jitter estimate.
+            multiplier: User's sensitivity multiplier.
+
+        Returns:
+            Effective tolerance in the measurement's native units.
+        """
+        sensitivity_scale = multiplier / DEFAULT_SENSITIVITY_MULTIPLIER
+        floor = POSTURE_TOLERANCE_FLOORS.get(name, 1.0) * sensitivity_scale
+        std_based = max(0.0, std) * multiplier
+        return max(floor, std_based, 1e-6)
+
+    @staticmethod
+    def _compute_relevant_delta(name: str, raw_delta: float) -> float:
+        """
+        Return only the part of a measurement change that indicates worse posture.
+
+        Shoulder and head tilt can be bad in either direction, so their
+        absolute delta is used. Forward-head ratio and neck angle are normalized
+        posture-risk measurements where lower-than-baseline is not the common
+        failure mode, so only increases count toward bad posture.
+
+        Args:
+            name: Measurement name.
+            raw_delta: current - baseline value.
+
+        Returns:
+            Non-negative deviation to compare against tolerance.
+        """
+        if name in (MEASURE_FORWARD_HEAD_RATIO, MEASURE_NECK_ANGLE):
+            return max(0.0, raw_delta)
+        return abs(raw_delta)
 
     @staticmethod
     def _build_status(deviations: list[MeasurementDeviation]) -> PostureStatus:

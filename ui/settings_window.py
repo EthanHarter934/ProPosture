@@ -199,7 +199,7 @@ class SettingsPanel(ctk.CTkFrame):
 
     def _build_sensitivity_section(self, parent: ctk.CTkFrame) -> None:
         """Build sensitivity multiplier sliders for each measurement."""
-        section = self._make_section(parent, "🎚️  Sensitivity (Std Dev Multiplier)")
+        section = self._make_section(parent, "🎚️  Posture Sensitivity")
 
         ctk.CTkLabel(
             section,
