@@ -4,7 +4,7 @@
 
 ## Features
 
-- 🎯 **Personalized Calibration** — No hardcoded thresholds. Your baseline is YOUR good posture.
+- 🎯 **Personalized Calibration** — Your baseline is YOUR good posture, with practical tolerance floors to avoid overreacting to webcam jitter.
 - 📐 **4 Posture Measurements** — Shoulder angle, forward head ratio, head tilt, and neck angle.
 - 🎙️ **Two Coach Personalities** — Calm professional or aggressive drill sergeant.
 - 🔒 **100% Local** — Camera feed is processed on-device. Nothing is recorded or transmitted.
@@ -59,11 +59,11 @@ On first launch, the **Calibration Wizard** will guide you through setting your 
 
 ## How It Works
 
-1. **Calibrate** — Sit with ideal posture. ProPosture captures 90 frames (3 seconds) to learn your personal baseline, computing the mean and standard deviation of each measurement.
+1. **Calibrate** — Sit with ideal posture. ProPosture captures 90 frames (3 seconds) to learn your personal baseline, using robust center and jitter estimates so a few noisy frames do not skew the profile.
 
-2. **Monitor** — In the background, each frame is compared to your baseline. If any measurement deviates beyond `mean ± (multiplier × std_dev)`, a warning is raised.
+2. **Monitor** — In the background, each frame is compared to your baseline with measurement-specific tolerance floors. This keeps a very steady calibration from creating tiny thresholds that mark normal webcam jitter as bad posture.
 
-3. **Alert** — If bad posture persists for a configurable duration (default: 10 seconds), your chosen coach speaks up with specific feedback (e.g., "head too far forward").
+3. **Alert** — If bad posture persists for a configurable duration (default: 10 seconds), your chosen coach speaks up with specific feedback (e.g., "head too far forward"). Some measurements are directional: improving relative to your calibrated posture does not count as bad.
 
 ## Measurements
 
@@ -77,8 +77,9 @@ On first launch, the **Calibration Wizard** will guide you through setting your 
 ## Settings
 
 - Coach personality (Standard / Drill Sergeant)
+- gTTS voice/accent (US, UK, Australian, Canadian, Indian English)
 - Sensitivity multipliers per measurement (1.0 = very sensitive, 4.0 = lenient)
-- Alert delay (5–60 seconds)
+- Bad posture time before an alert (5–60 seconds)
 - Cooldown between alerts (15–300 seconds)
 - Camera index selection
 - Dark / Light mode

@@ -19,7 +19,6 @@ datas += collect_data_files("mediapipe")
 
 hiddenimports = []
 hiddenimports += collect_submodules("mediapipe")
-hiddenimports += collect_submodules("pyttsx3.drivers")
 
 a = Analysis(
     [str(project_dir / "main.py")],

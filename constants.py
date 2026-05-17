@@ -47,6 +47,7 @@ APP_DATA_DIR: Path = _get_app_data_dir()
 LOG_DIR: Path = APP_DATA_DIR / "logs"
 PROFILE_PATH: Path = APP_DATA_DIR / "profile.json"
 SETTINGS_PATH: Path = APP_DATA_DIR / "settings.json"
+TTS_CACHE_DIR: Path = APP_DATA_DIR / "tts_cache"
 RESOURCE_DIR: Path = _get_resource_dir()
 ASSETS_DIR: Path = RESOURCE_DIR / "assets"
 ICON_PATH: Path = ASSETS_DIR / "icon.png"
@@ -100,11 +101,10 @@ FRAME_INTERVAL_MS: int = 1000 // TARGET_FPS  # ~33ms
 # CALIBRATION
 # ═══════════════════════════════════════════════
 
-CALIBRATION_VERSION: int = 1
+CALIBRATION_VERSION: int = 2
 CALIBRATION_CAPTURE_FRAMES: int = 90  # 3 seconds at 30 fps
 STABILITY_WINDOW_FRAMES: int = 30  # 1 second of frames for stability check
 STABILITY_THRESHOLD: float = 0.55  # 0.0–1.0 to consider user "stable"
-HIGH_VARIANCE_THRESHOLD: float = 5.0  # Flag quality warning if std > this
 
 # ═══════════════════════════════════════════════
 # SENSITIVITY DEFAULTS (std dev multipliers)
@@ -150,6 +150,18 @@ DRILL_SERGEANT_VOLUME: float = 1.0
 COACH_STANDARD: str = "standard"
 COACH_DRILL_SERGEANT: str = "drill_sergeant"
 
+DEFAULT_TTS_VOICE: str = "us"
+TTS_VOICE_OPTIONS: dict[str, dict[str, str]] = {
+    "us": {"label": "US English", "lang": "en", "tld": "com"},
+    "uk": {"label": "UK English", "lang": "en", "tld": "co.uk"},
+    "australia": {"label": "Australian English", "lang": "en", "tld": "com.au"},
+    "canada": {"label": "Canadian English", "lang": "en", "tld": "ca"},
+    "india": {"label": "Indian English", "lang": "en", "tld": "co.in"},
+}
+TTS_VOICE_LABELS: dict[str, str] = {
+    key: config["label"] for key, config in TTS_VOICE_OPTIONS.items()
+}
+
 # ═══════════════════════════════════════════════
 # MEASUREMENT NAMES (used as dict keys everywhere)
 # ═══════════════════════════════════════════════
@@ -171,6 +183,24 @@ MEASUREMENT_DISPLAY_NAMES: dict[str, str] = {
     MEASURE_FORWARD_HEAD_RATIO: "Forward Head Ratio",
     MEASURE_HEAD_TILT_ANGLE: "Head Tilt Angle",
     MEASURE_NECK_ANGLE: "Neck Angle",
+}
+
+# Minimum tolerances for posture classification at the default sensitivity.
+# These prevent very stable calibrations from creating near-zero thresholds
+# that classify ordinary landmark jitter as bad posture.
+POSTURE_TOLERANCE_FLOORS: dict[str, float] = {
+    MEASURE_SHOULDER_ANGLE: 4.0,        # degrees
+    MEASURE_FORWARD_HEAD_RATIO: 0.12,   # ratio of shoulder width
+    MEASURE_HEAD_TILT_ANGLE: 4.0,       # degrees
+    MEASURE_NECK_ANGLE: 8.0,            # degrees
+}
+
+# Maximum acceptable raw jitter during calibration capture.
+CALIBRATION_VARIANCE_LIMITS: dict[str, float] = {
+    MEASURE_SHOULDER_ANGLE: 3.0,        # degrees
+    MEASURE_FORWARD_HEAD_RATIO: 0.08,   # ratio of shoulder width
+    MEASURE_HEAD_TILT_ANGLE: 3.0,       # degrees
+    MEASURE_NECK_ANGLE: 6.0,            # degrees
 }
 
 # ═══════════════════════════════════════════════

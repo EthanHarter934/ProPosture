@@ -2,9 +2,9 @@
 Calibration Module
 
 Manages the calibration session: accumulates frames to assess stability,
-captures a 90-frame baseline window, computes mean/std for each measurement,
-and evaluates capture quality. This is the heart of ProPosture — all posture
-detection is relative to the values produced here.
+captures a 90-frame baseline window, computes robust center/jitter values for
+each measurement, and evaluates capture quality. This is the heart of
+ProPosture — all posture detection is relative to the values produced here.
 """
 
 import logging
@@ -18,8 +18,8 @@ import numpy as np
 from constants import (
     ALL_MEASUREMENTS,
     CALIBRATION_CAPTURE_FRAMES,
+    CALIBRATION_VARIANCE_LIMITS,
     CALIBRATION_VERSION,
-    HIGH_VARIANCE_THRESHOLD,
     STABILITY_WINDOW_FRAMES,
 )
 from core.posture_analyzer import PostureMeasurements
@@ -30,11 +30,11 @@ logger = logging.getLogger(__name__)
 @dataclass
 class BaselineValues:
     """
-    Computed baseline: mean and standard deviation for each measurement.
+    Computed baseline: center and jitter estimate for each measurement.
 
     Attributes:
-        means: Dict of measurement name → mean value.
-        std_devs: Dict of measurement name → standard deviation.
+        means: Dict of measurement name → robust center value.
+        std_devs: Dict of measurement name → robust jitter estimate.
     """
 
     means: dict[str, float]
@@ -134,9 +134,9 @@ class CalibrationSession:
         """
         Compute how stable the user's posture has been over the recent window.
 
-        Uses the coefficient of variation (std/mean) of each measurement
-        over the last STABILITY_WINDOW_FRAMES frames. A lower CV means
-        more stable. The score is inverted and normalized to 0.0–1.0.
+        Uses absolute jitter of each measurement over the last
+        STABILITY_WINDOW_FRAMES frames. Lower jitter means more stable.
+        The score is inverted and normalized to 0.0–1.0.
 
         Returns:
             Stability score from 0.0 (unstable) to 1.0 (very stable).
@@ -216,7 +216,7 @@ class CalibrationSession:
         # Use exactly the required number of frames
         frames = self._capture_buffer[:CALIBRATION_CAPTURE_FRAMES]
         baseline = self._compute_baseline(frames)
-        quality = self._assess_quality(baseline)
+        quality = self._assess_quality(frames, baseline)
         captured_at = time.strftime("%Y-%m-%dT%H:%M:%S%z")
 
         result = CalibrationResult(
@@ -233,26 +233,33 @@ class CalibrationSession:
     @staticmethod
     def _compute_baseline(frames: list[dict[str, float]]) -> BaselineValues:
         """
-        Compute mean and std dev for each measurement across frames.
+        Compute robust center and jitter for each measurement across frames.
 
         Args:
             frames: List of measurement dictionaries.
 
         Returns:
-            BaselineValues with means and std_devs.
+            BaselineValues with robust center and jitter estimates.
         """
         means: dict[str, float] = {}
         std_devs: dict[str, float] = {}
 
         for name in ALL_MEASUREMENTS:
             values = np.array([f[name] for f in frames])
-            means[name] = float(np.mean(values))
-            std_devs[name] = float(np.std(values))
+            center = float(np.median(values))
+            deviations = np.abs(values - center)
+            robust_std = float(np.median(deviations) * 1.4826)
+
+            means[name] = center
+            std_devs[name] = robust_std
 
         return BaselineValues(means=means, std_devs=std_devs)
 
     @staticmethod
-    def _assess_quality(baseline: BaselineValues) -> QualityReport:
+    def _assess_quality(
+        frames: list[dict[str, float]],
+        baseline: BaselineValues,
+    ) -> QualityReport:
         """
         Assess the quality of the captured baseline.
 
@@ -260,6 +267,7 @@ class CalibrationSession:
         the user was moving during capture.
 
         Args:
+            frames: Raw captured measurement frames.
             baseline: Computed baseline values.
 
         Returns:
@@ -270,13 +278,16 @@ class CalibrationSession:
 
         for name in ALL_MEASUREMENTS:
             mean = baseline.means[name]
-            std = baseline.std_devs[name]
-            is_ok = std < HIGH_VARIANCE_THRESHOLD
+            values = np.array([f[name] for f in frames])
+            std = float(np.std(values))
+            limit = CALIBRATION_VARIANCE_LIMITS.get(name, 5.0)
+            is_ok = std < limit
 
             if not is_ok:
                 display = name.replace("_", " ").title()
                 warnings.append(
-                    f"{display}: high variance detected (std={std:.2f}). "
+                    f"{display}: high variance detected (std={std:.2f}, "
+                    f"limit={limit:.2f}). "
                     f"You may have been moving during capture."
                 )
 
