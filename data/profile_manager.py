@@ -2,9 +2,9 @@
 Profile Manager Module
 
 Handles loading and saving user calibration profiles and application settings
-to JSON files in the user's AppData/Local/ProPosture/ directory. Uses atomic
-writes (temp file + rename) for crash safety and provides schema validation
-with sensible defaults for missing keys.
+to JSON files in the user's platform-specific ProPosture data directory. Uses
+atomic writes (temp file + rename) for crash safety and provides schema
+validation with sensible defaults for missing keys.
 """
 
 import json
@@ -63,7 +63,7 @@ class AppSettings:
         cooldown_sec: Minimum seconds between alerts.
         camera_index: Webcam device index.
         dark_mode: Whether dark mode is enabled.
-        launch_at_startup: Whether to launch at Windows startup.
+        launch_at_startup: Whether to launch at OS startup/login.
         show_camera_preview: Whether to show live camera in dashboard.
         hotkey: Global hotkey string for pause/resume.
     """
@@ -82,8 +82,8 @@ class ProfileManager:
     """
     Manages loading and saving calibration profiles and app settings.
 
-    Files are stored as JSON in %LOCALAPPDATA%/ProPosture/. All writes
-    are atomic (write to temp file, then rename) to prevent corruption.
+    Files are stored as JSON in the platform-specific app data directory. All
+    writes are atomic (write to temp file, then rename) to prevent corruption.
     """
 
     def __init__(self) -> None:
@@ -93,7 +93,7 @@ class ProfileManager:
 
     @staticmethod
     def _ensure_directories() -> None:
-        """Create the AppData directory structure if it doesn't exist."""
+        """Create the app data directory structure if it doesn't exist."""
         APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
         logger.debug("Ensured directory: %s", APP_DATA_DIR)
 

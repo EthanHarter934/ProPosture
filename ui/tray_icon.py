@@ -7,13 +7,14 @@ thread as required by the library.
 """
 
 import logging
+import sys
 import threading
 from typing import Any, Callable, Optional
 
 from PIL import Image
 from pystray import Icon, Menu, MenuItem
 
-from constants import ICON_PATH, SNOOZE_DURATION_SEC
+from constants import ICON_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,10 @@ class TrayIcon:
             menu=menu,
         )
 
+        if sys.platform == "darwin":
+            self._run_detached()
+            return
+
         self._thread = threading.Thread(
             target=self._run,
             name="TrayIcon-Thread",
@@ -73,6 +78,15 @@ class TrayIcon:
         )
         self._thread.start()
         logger.info("Tray icon started")
+
+    def _run_detached(self) -> None:
+        """Start pystray in a mode compatible with the macOS Tk mainloop."""
+        try:
+            if self._icon is not None:
+                self._icon.run_detached()
+                logger.info("Tray icon started in detached mode")
+        except Exception:
+            logger.exception("Tray icon error")
 
     def _run(self) -> None:
         """Run the tray icon (blocking, runs on its own thread)."""

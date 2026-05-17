@@ -20,7 +20,25 @@
 git clone <repo-url>
 cd ProPosture
 python -m venv venv
+
+# Windows
 venv\Scripts\activate
+
+# macOS/Linux
+source venv/bin/activate
+
+pip install -r requirements.txt
+```
+
+On macOS, the Python used for the virtual environment must include Tkinter.
+If `python -c "import tkinter"` fails, install a Tk-enabled Python and recreate
+the virtual environment. For Homebrew Python 3.12, that usually means:
+
+```bash
+brew install python-tk@3.12
+rm -rf venv
+python -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
 ```
 
@@ -37,7 +55,7 @@ On first launch, the **Calibration Wizard** will guide you through setting your 
 - The app monitors your posture via webcam and alerts you with spoken feedback.
 - **Minimize** the window to send it to the system tray.
 - **Right-click the tray icon** for quick access to Pause, Resume, Recalibrate, or Quit.
-- Press **Ctrl+Shift+P** anywhere to toggle pause.
+- Press **Ctrl+Shift+P** anywhere to toggle pause on platforms supported by the `keyboard` package.
 
 ## How It Works
 
@@ -64,7 +82,7 @@ On first launch, the **Calibration Wizard** will guide you through setting your 
 - Cooldown between alerts (15–300 seconds)
 - Camera index selection
 - Dark / Light mode
-- Launch at Windows startup
+- Launch at startup/login
 
 ## Project Structure
 
@@ -73,13 +91,17 @@ proposture/
 ├── main.py                    # Entry point
 ├── constants.py               # All configurable values
 ├── requirements.txt           # Dependencies
+├── requirements-build.txt     # Build dependencies
+├── build.py                   # Cross-platform PyInstaller build wrapper
+├── ProPosture.spec            # PyInstaller app/exe spec
 ├── assets/
 │   └── icon.png               # App icon
 ├── core/
 │   ├── pose_detector.py       # MediaPipe landmark extraction
 │   ├── posture_analyzer.py    # Angle/distance math
 │   ├── calibration.py         # Calibration session management
-│   └── alert_engine.py        # Threshold and timing logic
+│   ├── alert_engine.py        # Threshold and timing logic
+│   └── startup.py             # Windows/macOS startup integration
 ├── audio/
 │   └── voice_manager.py       # TTS with coach personalities
 ├── ui/
@@ -93,22 +115,32 @@ proposture/
 
 ## Data Storage
 
-All data is stored locally at `%LOCALAPPDATA%\ProPosture\`:
+All data is stored locally in the OS-specific app data directory:
+
+- Windows: `%LOCALAPPDATA%\ProPosture\`
+- macOS: `~/Library/Application Support/ProPosture/`
+- Linux: `${XDG_DATA_HOME:-~/.local/share}/ProPosture/`
+
+Stored files:
 - `profile.json` — Calibration baseline and sensitivity settings
 - `settings.json` — App preferences
 - `logs/` — Application logs (retained for 7 days)
 
-## Building with PyInstaller
+## Building Executables
 
 ```bash
-pip install pyinstaller
-pyinstaller --onefile --windowed --icon=assets/icon.png --add-data "assets;assets" main.py
+python -m pip install -r requirements-build.txt
+python build.py
 ```
+
+PyInstaller builds for the OS it is running on. Run `python build.py` on
+Windows to create `dist/ProPosture.exe`, and run it on macOS to create
+`dist/ProPosture.app`.
 
 ## Requirements
 
 - Python 3.11+
-- Windows 10/11
+- Windows 10/11 or macOS
 - Webcam
 - Speakers or headphones (for voice alerts)
 

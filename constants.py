@@ -6,8 +6,9 @@ coach personality dialogue lines, and MediaPipe landmark indices. No other
 module should contain hardcoded values — import them from here.
 """
 
-from pathlib import Path
 import os
+import sys
+from pathlib import Path
 
 # ═══════════════════════════════════════════════
 # APPLICATION METADATA
@@ -20,12 +21,36 @@ APP_VERSION: str = "1.0.0"
 # FILE PATHS
 # ═══════════════════════════════════════════════
 
-APP_DATA_DIR: Path = Path(os.environ.get("LOCALAPPDATA", "")) / APP_NAME
+def _get_app_data_dir() -> Path:
+    """Return the platform-appropriate writable application data directory."""
+    if sys.platform == "win32":
+        base_dir = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
+        if base_dir:
+            return Path(base_dir) / APP_NAME
+        return Path.home() / "AppData" / "Local" / APP_NAME
+
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / APP_NAME
+
+    base_dir = os.environ.get("XDG_DATA_HOME")
+    if base_dir:
+        return Path(base_dir) / APP_NAME
+    return Path.home() / ".local" / "share" / APP_NAME
+
+
+def _get_resource_dir() -> Path:
+    """Return source root in development or PyInstaller's extraction dir."""
+    return Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+
+
+APP_DATA_DIR: Path = _get_app_data_dir()
 LOG_DIR: Path = APP_DATA_DIR / "logs"
 PROFILE_PATH: Path = APP_DATA_DIR / "profile.json"
 SETTINGS_PATH: Path = APP_DATA_DIR / "settings.json"
-ASSETS_DIR: Path = Path(__file__).parent / "assets"
+RESOURCE_DIR: Path = _get_resource_dir()
+ASSETS_DIR: Path = RESOURCE_DIR / "assets"
 ICON_PATH: Path = ASSETS_DIR / "icon.png"
+POSE_LANDMARKER_MODEL_PATH: Path = ASSETS_DIR / "pose_landmarker_lite.task"
 
 # ═══════════════════════════════════════════════
 # LOG RETENTION

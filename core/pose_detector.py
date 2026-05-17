@@ -14,7 +14,6 @@ import cv2
 import mediapipe as mp
 import numpy as np
 import time
-from pathlib import Path
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
@@ -27,7 +26,7 @@ from constants import (
     MIN_LANDMARK_VISIBILITY,
     POSE_MIN_DETECTION_CONFIDENCE,
     POSE_MIN_TRACKING_CONFIDENCE,
-    POSE_MODEL_COMPLEXITY,
+    POSE_LANDMARKER_MODEL_PATH,
     REQUIRED_LANDMARKS,
 )
 
@@ -65,7 +64,12 @@ class PoseDetector:
 
     def __init__(self) -> None:
         """Initialize MediaPipe Pose with configured parameters."""
-        model_path = str(Path(__file__).parent.parent / "assets" / "pose_landmarker_lite.task")
+        if not POSE_LANDMARKER_MODEL_PATH.exists():
+            raise FileNotFoundError(
+                f"MediaPipe pose model not found at {POSE_LANDMARKER_MODEL_PATH}"
+            )
+
+        model_path = str(POSE_LANDMARKER_MODEL_PATH)
         base_options = python.BaseOptions(model_asset_path=model_path)
         options = vision.PoseLandmarkerOptions(
             base_options=base_options,

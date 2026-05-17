@@ -8,10 +8,7 @@ and starts the main window. Handles graceful shutdown on exit.
 
 import logging
 import sys
-import threading
-import time
 from datetime import datetime, timedelta
-from pathlib import Path
 
 import customtkinter as ctk
 
@@ -19,10 +16,8 @@ from constants import (
     APP_DATA_DIR,
     APP_NAME,
     DEFAULT_HOTKEY,
-    ICON_PATH,
     LOG_DIR,
     LOG_RETENTION_DAYS,
-    SNOOZE_DURATION_SEC,
 )
 from data.profile_manager import ProfileManager
 from ui.main_window import MainWindow
@@ -33,8 +28,8 @@ def setup_logging() -> None:
     """
     Configure application logging to both file and console.
 
-    Log files are written to %LOCALAPPDATA%/ProPosture/logs/ with
-    daily rotation. Old logs beyond LOG_RETENTION_DAYS are cleaned up.
+    Log files are written to the platform-specific ProPosture logs directory
+    with daily rotation. Old logs beyond LOG_RETENTION_DAYS are cleaned up.
     """
     LOG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -74,7 +69,11 @@ def cleanup_old_logs() -> None:
         logging.exception("Error cleaning up old logs")
 
 
-def register_global_hotkey(main_window: MainWindow, tray: TrayIcon) -> None:
+def register_global_hotkey(
+    main_window: MainWindow,
+    tray: TrayIcon,
+    hotkey: str = DEFAULT_HOTKEY,
+) -> None:
     """
     Register the global hotkey for toggling pause/resume.
 
@@ -84,7 +83,12 @@ def register_global_hotkey(main_window: MainWindow, tray: TrayIcon) -> None:
     Args:
         main_window: Main window instance for the toggle callback.
         tray: Tray icon to update pause state.
+        hotkey: Keyboard shortcut string.
     """
+    if sys.platform == "darwin":
+        logging.info("Global hotkey disabled on macOS")
+        return
+
     try:
         import keyboard
 
@@ -94,8 +98,8 @@ def register_global_hotkey(main_window: MainWindow, tray: TrayIcon) -> None:
             is_paused = main_window._alert_engine.is_paused
             tray.set_paused(is_paused)
 
-        keyboard.add_hotkey(DEFAULT_HOTKEY, on_hotkey)
-        logging.info("Global hotkey registered: %s", DEFAULT_HOTKEY)
+        keyboard.add_hotkey(hotkey, on_hotkey)
+        logging.info("Global hotkey registered: %s", hotkey)
     except ImportError:
         logging.warning("keyboard library not available — global hotkey disabled")
     except Exception:
@@ -113,7 +117,7 @@ def main() -> None:
     logger = logging.getLogger(__name__)
     logger.info("ProPosture starting up")
 
-    # Ensure AppData directory
+    # Ensure app data directory
     APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
     # Load profile and settings
@@ -144,7 +148,7 @@ def main() -> None:
     app.tray_icon = tray
 
     # Register global hotkey
-    register_global_hotkey(app, tray)
+    register_global_hotkey(app, tray, settings.hotkey or DEFAULT_HOTKEY)
 
     # Minimize to tray on window close (not quit)
     app.protocol("WM_DELETE_WINDOW", app.on_closing)

@@ -8,8 +8,6 @@ rather than opened as a separate toplevel. All changes persist immediately.
 """
 
 import logging
-import sys
-import winreg
 from typing import Any, Callable, Optional
 
 import customtkinter as ctk
@@ -31,8 +29,11 @@ from constants import (
     MIN_ALERT_DELAY_SEC,
     MIN_COOLDOWN_SEC,
     MIN_SENSITIVITY_MULTIPLIER,
-    STARTUP_REGISTRY_KEY,
-    STARTUP_REGISTRY_NAME,
+)
+from core.startup import (
+    get_startup_label,
+    is_startup_supported,
+    set_launch_at_startup,
 )
 from data.profile_manager import AppSettings, CalibrationProfile
 
@@ -352,48 +353,22 @@ class SettingsPanel(ctk.CTkFrame):
 
         self._startup_var = ctk.BooleanVar(value=self._settings.launch_at_startup)
         ctk.CTkCheckBox(
-            section, text="Launch at Windows startup",
+            section,
+            text=f"Launch at {get_startup_label()}",
             variable=self._startup_var,
             command=self._on_startup_change,
             font=ctk.CTkFont(size=13),
+            state="normal" if is_startup_supported() else "disabled",
         ).pack(anchor="w", pady=5)
 
     def _on_startup_change(self) -> None:
         """Handle startup checkbox change."""
         enabled = self._startup_var.get()
+        if not set_launch_at_startup(enabled):
+            self._startup_var.set(False)
+            enabled = False
         self._settings.launch_at_startup = enabled
-        self._set_windows_startup(enabled)
         self._save()
-
-    @staticmethod
-    def _set_windows_startup(enabled: bool) -> None:
-        """
-        Add or remove ProPosture from Windows startup registry.
-
-        Args:
-            enabled: Whether to enable or disable startup.
-        """
-        try:
-            key = winreg.OpenKey(
-                winreg.HKEY_CURRENT_USER,
-                STARTUP_REGISTRY_KEY,
-                0, winreg.KEY_SET_VALUE,
-            )
-            if enabled:
-                exe_path = sys.executable
-                winreg.SetValueEx(
-                    key, STARTUP_REGISTRY_NAME, 0, winreg.REG_SZ, exe_path
-                )
-                logger.info("Added to Windows startup: %s", exe_path)
-            else:
-                try:
-                    winreg.DeleteValue(key, STARTUP_REGISTRY_NAME)
-                    logger.info("Removed from Windows startup")
-                except FileNotFoundError:
-                    pass
-            winreg.CloseKey(key)
-        except Exception:
-            logger.exception("Failed to modify Windows startup registry")
 
     # ═══════════════════════════════════════════
     # ACTION BUTTONS
@@ -428,6 +403,9 @@ class SettingsPanel(ctk.CTkFrame):
 
     def _reset_defaults(self) -> None:
         """Reset all settings to defaults."""
+        if self._settings.launch_at_startup:
+            set_launch_at_startup(False)
+
         self._settings = AppSettings()
         self._refresh_ui_values()
         self._save()
