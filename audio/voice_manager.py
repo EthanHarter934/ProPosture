@@ -8,6 +8,7 @@ playback do not block the UI or detection threads.
 
 import hashlib
 import logging
+import os
 import queue
 import random
 import shutil
@@ -242,18 +243,7 @@ class VoiceManager:
             return
 
         if sys.platform == "win32":
-            escaped = str(path).replace("'", "''")
-            script = (
-                "$player = New-Object -ComObject WMPlayer.OCX;"
-                f"$player.URL = '{escaped}';"
-                "$player.controls.play();"
-                "Start-Sleep -Milliseconds 200;"
-                "while ($player.playState -eq 3) { Start-Sleep -Milliseconds 100 }"
-            )
-            subprocess.run(
-                ["powershell", "-NoProfile", "-Command", script],
-                check=True,
-            )
+            VoiceManager._play_audio_windows(path)
             return
 
         for command in ("ffplay", "mpg123", "mpg321"):
@@ -268,6 +258,40 @@ class VoiceManager:
             return
 
         raise RuntimeError("No supported MP3 playback command found")
+
+    @staticmethod
+    def _play_audio_windows(path: Path) -> None:
+        """Play an MP3 on Windows, waiting long enough for slow startup."""
+        escaped = str(path).replace("'", "''")
+        script = (
+            "$ErrorActionPreference = 'Stop';"
+            "$player = New-Object -ComObject WMPlayer.OCX;"
+            "$player.settings.autoStart = $false;"
+            f"$player.URL = '{escaped}';"
+            "$player.controls.play();"
+            "$started = $false;"
+            "$deadline = (Get-Date).AddSeconds(30);"
+            "while ((Get-Date) -lt $deadline) {"
+            "  if ($player.playState -eq 3) { $started = $true }"
+            "  if ($started -and $player.playState -ne 3) { break }"
+            "  Start-Sleep -Milliseconds 100;"
+            "}"
+            "$player.close();"
+            "if (-not $started) { exit 2 }"
+        )
+
+        powershell = shutil.which("powershell") or shutil.which("pwsh")
+        if powershell is not None:
+            try:
+                subprocess.run(
+                    [powershell, "-NoProfile", "-Command", script],
+                    check=True,
+                )
+                return
+            except subprocess.CalledProcessError:
+                logger.exception("Windows Media Player playback failed")
+
+        os.startfile(str(path))  # type: ignore[attr-defined]
 
     @staticmethod
     def _normalize_voice(value: str) -> str:
