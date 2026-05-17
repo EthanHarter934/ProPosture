@@ -519,18 +519,27 @@ class CalibrationPanel(ctk.CTkFrame):
 
     def _display_frame(self, frame: np.ndarray) -> None:
         """Convert an OpenCV frame and display it in the appropriate label."""
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        img = Image.fromarray(rgb)
-        img.thumbnail((CAMERA_THUMBNAIL_WIDTH, CAMERA_THUMBNAIL_HEIGHT), Image.Resampling.LANCZOS)
-        photo = ctk.CTkImage(light_image=img, size=img.size)
+        try:
+            h, w = frame.shape[:2]
+            ratio = min(CAMERA_THUMBNAIL_WIDTH / w, CAMERA_THUMBNAIL_HEIGHT / h)
+            new_w = int(w * ratio)
+            new_h = int(h * ratio)
 
-        target_label = (
-            self._capture_camera_label
-            if self._current_step == 2
-            else self._camera_label
-        )
-        target_label.configure(image=photo, text="")
-        target_label._photo = photo  # Prevent garbage collection
+            # Fast resize in C++ before converting to PIL to save massive CPU/memory bandwidth
+            small_frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+            rgb = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
+            img = Image.fromarray(rgb)
+            photo = ctk.CTkImage(light_image=img, size=(new_w, new_h))
+
+            target_label = (
+                self._capture_camera_label
+                if self._current_step == 2
+                else self._camera_label
+            )
+            target_label.configure(image=photo, text="")
+            target_label._photo = photo  # Prevent garbage collection
+        except Exception:
+            logger.debug("Failed to display calibration frame")
 
     def _update_measurement_display(self, measurements: Any) -> None:
         """Update the measurement value labels."""

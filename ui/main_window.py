@@ -587,10 +587,16 @@ class MainWindow(ctk.CTk):
     def _update_camera_preview(self, frame: np.ndarray) -> None:
         """Update the camera preview label with the current frame."""
         try:
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            h, w = frame.shape[:2]
+            ratio = min(CAMERA_THUMBNAIL_WIDTH / w, CAMERA_THUMBNAIL_HEIGHT / h)
+            new_w = int(w * ratio)
+            new_h = int(h * ratio)
+
+            # Fast resize in C++ before converting to PIL to save massive CPU/memory bandwidth
+            small_frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+            rgb = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
             img = Image.fromarray(rgb)
-            img.thumbnail((CAMERA_THUMBNAIL_WIDTH, CAMERA_THUMBNAIL_HEIGHT), Image.Resampling.LANCZOS)
-            photo = ctk.CTkImage(light_image=img, size=img.size)
+            photo = ctk.CTkImage(light_image=img, size=(new_w, new_h))
             self._camera_label.configure(image=photo, text="")
             self._camera_label._photo = photo
         except Exception:
