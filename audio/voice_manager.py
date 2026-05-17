@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import ctypes
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -261,37 +262,24 @@ class VoiceManager:
 
     @staticmethod
     def _play_audio_windows(path: Path) -> None:
-        """Play an MP3 on Windows, waiting long enough for slow startup."""
-        escaped = str(path).replace("'", "''")
-        script = (
-            "$ErrorActionPreference = 'Stop';"
-            "$player = New-Object -ComObject WMPlayer.OCX;"
-            "$player.settings.autoStart = $false;"
-            f"$player.URL = '{escaped}';"
-            "$player.controls.play();"
-            "$started = $false;"
-            "$deadline = (Get-Date).AddSeconds(30);"
-            "while ((Get-Date) -lt $deadline) {"
-            "  if ($player.playState -eq 3) { $started = $true }"
-            "  if ($started -and $player.playState -ne 3) { break }"
-            "  Start-Sleep -Milliseconds 100;"
-            "}"
-            "$player.close();"
-            "if (-not $started) { exit 2 }"
-        )
-
-        powershell = shutil.which("powershell") or shutil.which("pwsh")
-        if powershell is not None:
-            try:
-                subprocess.run(
-                    [powershell, "-NoProfile", "-Command", script],
-                    check=True,
-                )
-                return
-            except subprocess.CalledProcessError:
-                logger.exception("Windows Media Player playback failed")
-
-        os.startfile(str(path))  # type: ignore[attr-defined]
+        """Play an MP3 on Windows using MCI."""
+        path_str = str(path)
+        mci = ctypes.windll.winmm.mciSendStringW
+        
+        alias = "proposture_tts"
+        open_cmd = f'open "{path_str}" alias {alias}'
+        
+        res = mci(open_cmd, None, 0, 0)
+        if res != 0:
+            logger.error("Failed to open audio file via MCI (code %d): %s", res, path_str)
+            return
+            
+        try:
+            play_res = mci(f'play {alias} wait', None, 0, 0)
+            if play_res != 0:
+                logger.error("Failed to play audio file via MCI (code %d)", play_res)
+        finally:
+            mci(f'close {alias}', None, 0, 0)
 
     @staticmethod
     def _normalize_voice(value: str) -> str:
