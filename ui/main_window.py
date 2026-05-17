@@ -89,7 +89,10 @@ class MainWindow(ctk.CTk):
             alert_delay=settings.alert_delay_sec,
             cooldown=settings.cooldown_sec,
         )
-        self._voice_manager = VoiceManager(personality=settings.coach_personality)
+        self._voice_manager = VoiceManager(
+            personality=settings.coach_personality,
+            voice=settings.tts_voice,
+        )
 
         # Detection state
         self._monitoring = False
@@ -663,6 +666,7 @@ class MainWindow(ctk.CTk):
         self._alert_engine.alert_delay = settings.alert_delay_sec
         self._alert_engine.cooldown = settings.cooldown_sec
         self._voice_manager.personality = settings.coach_personality
+        self._voice_manager.voice = settings.tts_voice
         logger.debug("Settings saved and applied")
 
     def _on_profile_saved(self, profile: CalibrationProfile) -> None:
@@ -677,14 +681,17 @@ class MainWindow(ctk.CTk):
         self._profile = None
         self.stop_monitoring()
 
-    def _test_voice(self, personality: str) -> None:
+    def _test_voice(self, personality: str, voice: str) -> None:
         """Test the selected voice personality."""
-        old = self._voice_manager.personality
+        old_personality = self._voice_manager.personality
+        old_voice = self._voice_manager.voice
         self._voice_manager.personality = personality
+        self._voice_manager.voice = voice
         self._voice_manager.speak_text(
             "This is how I'll sound when I coach you."
         )
-        self._voice_manager.personality = old
+        self._voice_manager.personality = old_personality
+        self._voice_manager.voice = old_voice
 
     # ═══════════════════════════════════════════
     # LIFECYCLE

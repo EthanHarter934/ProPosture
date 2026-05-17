@@ -25,8 +25,10 @@ from constants import (
     DEFAULT_COOLDOWN_SEC,
     DEFAULT_HOTKEY,
     DEFAULT_SENSITIVITY_MULTIPLIER,
+    DEFAULT_TTS_VOICE,
     PROFILE_PATH,
     SETTINGS_PATH,
+    TTS_VOICE_OPTIONS,
 )
 
 logger = logging.getLogger(__name__)
@@ -59,6 +61,7 @@ class AppSettings:
 
     Attributes:
         coach_personality: Current coach personality key.
+        tts_voice: Current gTTS voice/accent key.
         alert_delay_sec: Seconds of bad posture before alert.
         cooldown_sec: Minimum seconds between alerts.
         camera_index: Webcam device index.
@@ -69,6 +72,7 @@ class AppSettings:
     """
 
     coach_personality: str = COACH_STANDARD
+    tts_voice: str = DEFAULT_TTS_VOICE
     alert_delay_sec: float = DEFAULT_ALERT_DELAY_SEC
     cooldown_sec: float = DEFAULT_COOLDOWN_SEC
     camera_index: int = DEFAULT_CAMERA_INDEX
@@ -222,8 +226,13 @@ class ProfileManager:
             Populated AppSettings.
         """
         defaults = AppSettings()
+        tts_voice = data.get("tts_voice", defaults.tts_voice)
+        if tts_voice not in TTS_VOICE_OPTIONS:
+            tts_voice = defaults.tts_voice
+
         return AppSettings(
             coach_personality=data.get("coach_personality", defaults.coach_personality),
+            tts_voice=tts_voice,
             alert_delay_sec=data.get("alert_delay_sec", defaults.alert_delay_sec),
             cooldown_sec=data.get("cooldown_sec", defaults.cooldown_sec),
             camera_index=data.get("camera_index", defaults.camera_index),
@@ -245,6 +254,7 @@ class ProfileManager:
         """
         data = {
             "coach_personality": settings.coach_personality,
+            "tts_voice": settings.tts_voice,
             "alert_delay_sec": settings.alert_delay_sec,
             "cooldown_sec": settings.cooldown_sec,
             "camera_index": settings.camera_index,

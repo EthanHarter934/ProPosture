@@ -47,6 +47,7 @@ APP_DATA_DIR: Path = _get_app_data_dir()
 LOG_DIR: Path = APP_DATA_DIR / "logs"
 PROFILE_PATH: Path = APP_DATA_DIR / "profile.json"
 SETTINGS_PATH: Path = APP_DATA_DIR / "settings.json"
+TTS_CACHE_DIR: Path = APP_DATA_DIR / "tts_cache"
 RESOURCE_DIR: Path = _get_resource_dir()
 ASSETS_DIR: Path = RESOURCE_DIR / "assets"
 ICON_PATH: Path = ASSETS_DIR / "icon.png"
@@ -148,6 +149,18 @@ DRILL_SERGEANT_VOLUME: float = 1.0
 
 COACH_STANDARD: str = "standard"
 COACH_DRILL_SERGEANT: str = "drill_sergeant"
+
+DEFAULT_TTS_VOICE: str = "us"
+TTS_VOICE_OPTIONS: dict[str, dict[str, str]] = {
+    "us": {"label": "US English", "lang": "en", "tld": "com"},
+    "uk": {"label": "UK English", "lang": "en", "tld": "co.uk"},
+    "australia": {"label": "Australian English", "lang": "en", "tld": "com.au"},
+    "canada": {"label": "Canadian English", "lang": "en", "tld": "ca"},
+    "india": {"label": "Indian English", "lang": "en", "tld": "co.in"},
+}
+TTS_VOICE_LABELS: dict[str, str] = {
+    key: config["label"] for key, config in TTS_VOICE_OPTIONS.items()
+}
 
 # ═══════════════════════════════════════════════
 # MEASUREMENT NAMES (used as dict keys everywhere)

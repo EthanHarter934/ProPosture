@@ -77,8 +77,9 @@ On first launch, the **Calibration Wizard** will guide you through setting your 
 ## Settings
 
 - Coach personality (Standard / Drill Sergeant)
+- gTTS voice/accent (US, UK, Australian, Canadian, Indian English)
 - Sensitivity multipliers per measurement (1.0 = very sensitive, 4.0 = lenient)
-- Alert delay (5–60 seconds)
+- Bad posture time before an alert (5–60 seconds)
 - Cooldown between alerts (15–300 seconds)
 - Camera index selection
 - Dark / Light mode

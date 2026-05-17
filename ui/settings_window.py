@@ -22,6 +22,7 @@ from constants import (
     DEFAULT_ALERT_DELAY_SEC,
     DEFAULT_COOLDOWN_SEC,
     DEFAULT_SENSITIVITY_MULTIPLIER,
+    DEFAULT_TTS_VOICE,
     MAX_ALERT_DELAY_SEC,
     MAX_COOLDOWN_SEC,
     MAX_SENSITIVITY_MULTIPLIER,
@@ -29,6 +30,7 @@ from constants import (
     MIN_ALERT_DELAY_SEC,
     MIN_COOLDOWN_SEC,
     MIN_SENSITIVITY_MULTIPLIER,
+    TTS_VOICE_LABELS,
 )
 from core.startup import (
     get_startup_label,
@@ -58,7 +60,7 @@ class SettingsPanel(ctk.CTkFrame):
         on_profile_save: Optional[Callable[[CalibrationProfile], None]] = None,
         on_recalibrate: Optional[Callable[[], None]] = None,
         on_delete_calibration: Optional[Callable[[], None]] = None,
-        on_test_voice: Optional[Callable[[str], None]] = None,
+        on_test_voice: Optional[Callable[[str, str], None]] = None,
         on_back: Optional[Callable[[], None]] = None,
         **kwargs: Any,
     ) -> None:
@@ -80,6 +82,7 @@ class SettingsPanel(ctk.CTkFrame):
 
         self._settings = settings
         self._profile = profile
+        self._voice_label_to_key = {label: key for key, label in TTS_VOICE_LABELS.items()}
         self._on_save = on_save
         self._on_profile_save = on_profile_save
         self._on_recalibrate = on_recalibrate
@@ -109,6 +112,9 @@ class SettingsPanel(ctk.CTkFrame):
     def _refresh_ui_values(self) -> None:
         """Refresh all UI widget values from current settings."""
         self._coach_var.set(self._settings.coach_personality)
+        self._voice_var.set(TTS_VOICE_LABELS.get(
+            self._settings.tts_voice, TTS_VOICE_LABELS[DEFAULT_TTS_VOICE]
+        ))
         self._delay_slider.set(self._settings.alert_delay_sec)
         self._delay_label.configure(text=f"{self._settings.alert_delay_sec:.0f}s")
         self._cooldown_slider.set(self._settings.cooldown_sec)
@@ -165,21 +171,37 @@ class SettingsPanel(ctk.CTkFrame):
     # ═══════════════════════════════════════════
 
     def _build_coach_section(self, parent: ctk.CTkFrame) -> None:
-        """Build coach personality selector with test button."""
-        section = self._make_section(parent, "🎙️  Coach Personality")
+        """Build coach personality and gTTS voice selectors with test button."""
+        section = self._make_section(parent, "🎙️  Voice")
 
-        row = ctk.CTkFrame(section, fg_color="transparent")
-        row.pack(fill="x", pady=5)
+        row_coach = ctk.CTkFrame(section, fg_color="transparent")
+        row_coach.pack(fill="x", pady=5)
+        ctk.CTkLabel(row_coach, text="Coach Style:", width=120,
+                     anchor="w", font=ctk.CTkFont(size=13)).pack(side="left")
 
         self._coach_var = ctk.StringVar(value=self._settings.coach_personality)
         ctk.CTkOptionMenu(
-            row, variable=self._coach_var,
+            row_coach, variable=self._coach_var,
             values=["standard", "drill_sergeant"],
             command=self._on_coach_change, width=200,
         ).pack(side="left", padx=(0, 10))
 
+        row_voice = ctk.CTkFrame(section, fg_color="transparent")
+        row_voice.pack(fill="x", pady=5)
+        ctk.CTkLabel(row_voice, text="gTTS Voice:", width=120,
+                     anchor="w", font=ctk.CTkFont(size=13)).pack(side="left")
+
+        self._voice_var = ctk.StringVar(value=TTS_VOICE_LABELS.get(
+            self._settings.tts_voice, TTS_VOICE_LABELS[DEFAULT_TTS_VOICE]
+        ))
+        ctk.CTkOptionMenu(
+            row_voice, variable=self._voice_var,
+            values=list(TTS_VOICE_LABELS.values()),
+            command=self._on_voice_change, width=200,
+        ).pack(side="left", padx=(0, 10))
+
         ctk.CTkButton(
-            row, text="Test Voice", width=100,
+            row_voice, text="Test Voice", width=100,
             fg_color=COLOR_ACCENT, command=self._test_voice,
         ).pack(side="left")
 
@@ -188,10 +210,16 @@ class SettingsPanel(ctk.CTkFrame):
         self._settings.coach_personality = value
         self._save()
 
+    def _on_voice_change(self, value: str) -> None:
+        """Handle gTTS voice selection change."""
+        self._settings.tts_voice = self._voice_label_to_key.get(value, DEFAULT_TTS_VOICE)
+        self._save()
+
     def _test_voice(self) -> None:
         """Fire the test voice callback."""
         if self._on_test_voice:
-            self._on_test_voice(self._coach_var.get())
+            voice_key = self._voice_label_to_key.get(self._voice_var.get(), DEFAULT_TTS_VOICE)
+            self._on_test_voice(self._coach_var.get(), voice_key)
 
     # ═══════════════════════════════════════════
     # SENSITIVITY SLIDERS
@@ -241,7 +269,7 @@ class SettingsPanel(ctk.CTkFrame):
 
         row_delay = ctk.CTkFrame(section, fg_color="transparent")
         row_delay.pack(fill="x", pady=5)
-        ctk.CTkLabel(row_delay, text="Alert Delay (sec):", width=160,
+        ctk.CTkLabel(row_delay, text="Bad Posture Time:", width=160,
                      anchor="w", font=ctk.CTkFont(size=13)).pack(side="left")
 
         self._delay_label = ctk.CTkLabel(
