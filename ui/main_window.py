@@ -92,6 +92,7 @@ class MainWindow(ctk.CTk):
         self._voice_manager = VoiceManager(
             personality=settings.coach_personality,
             voice=settings.tts_voice,
+            volume=settings.volume,
         )
 
         # Detection state
@@ -437,7 +438,11 @@ class MainWindow(ctk.CTk):
     def _detection_loop(self) -> None:
         """Background detection loop — capture, detect, analyze, alert."""
         try:
-            self._cap = cv2.VideoCapture(self._settings.camera_index)
+            import sys
+            if sys.platform == "win32":
+                self._cap = cv2.VideoCapture(self._settings.camera_index, cv2.CAP_DSHOW)
+            else:
+                self._cap = cv2.VideoCapture(self._settings.camera_index)
             self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_FRAME_WIDTH)
             self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_FRAME_HEIGHT)
             detector = PoseDetector()
@@ -482,8 +487,6 @@ class MainWindow(ctk.CTk):
             with self._lock:
                 self._current_frame = frame.copy()
 
-            time.sleep(0.033)
-
     def _evaluate_posture(self, measurements: Any) -> PostureStatus:
         """Evaluate posture against the calibrated baseline."""
         if self._profile is None:
@@ -526,7 +529,7 @@ class MainWindow(ctk.CTk):
         if not self._monitoring:
             return
         self._update_ui()
-        self.after(500, self._schedule_ui_update)
+        self.after(33, self._schedule_ui_update)
 
     def _update_ui(self) -> None:
         """Update all dashboard UI elements from current state."""
@@ -587,11 +590,10 @@ class MainWindow(ctk.CTk):
         try:
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             img = Image.fromarray(rgb)
-            img = img.resize(
-                (CAMERA_THUMBNAIL_WIDTH, CAMERA_THUMBNAIL_HEIGHT),
-                Image.Resampling.LANCZOS,
+            photo = ctk.CTkImage(
+                light_image=img, 
+                size=(CAMERA_THUMBNAIL_WIDTH, CAMERA_THUMBNAIL_HEIGHT)
             )
-            photo = ImageTk.PhotoImage(img)
             self._camera_label.configure(image=photo, text="")
             self._camera_label._photo = photo
         except Exception:
@@ -667,6 +669,7 @@ class MainWindow(ctk.CTk):
         self._alert_engine.cooldown = settings.cooldown_sec
         self._voice_manager.personality = settings.coach_personality
         self._voice_manager.voice = settings.tts_voice
+        self._voice_manager.volume = settings.volume
         logger.debug("Settings saved and applied")
 
     def _on_profile_saved(self, profile: CalibrationProfile) -> None:

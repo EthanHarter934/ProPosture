@@ -40,6 +40,7 @@ class SpeechRequest:
 
     text: str
     voice: str
+    volume: float = 1.0
 
 
 class VoiceManager:
@@ -55,6 +56,7 @@ class VoiceManager:
         self,
         personality: str = COACH_STANDARD,
         voice: str = DEFAULT_TTS_VOICE,
+        volume: float = 1.0,
     ) -> None:
         """
         Initialize the voice manager.
@@ -65,6 +67,7 @@ class VoiceManager:
         """
         self._personality = personality
         self._voice = self._normalize_voice(voice)
+        self._volume = max(0.0, min(1.0, volume))
         self._speech_queue: queue.Queue[Optional[SpeechRequest]] = queue.Queue(maxsize=5)
         self._is_speaking = threading.Event()
         self._shutdown = threading.Event()
@@ -80,9 +83,10 @@ class VoiceManager:
         )
         self._thread.start()
         logger.info(
-            "VoiceManager initialized with personality=%s, voice=%s",
+            "VoiceManager initialized with personality=%s, voice=%s, volume=%.2f",
             personality,
             self._voice,
+            self._volume,
         )
 
     @property
@@ -111,6 +115,20 @@ class VoiceManager:
         with self._lock:
             self._voice = normalized
         logger.info("gTTS voice changed to %s", normalized)
+
+    @property
+    def volume(self) -> float:
+        """Current audio volume (0.0 to 1.0)."""
+        with self._lock:
+            return self._volume
+
+    @volume.setter
+    def volume(self, value: float) -> None:
+        """Set the audio volume (0.0 to 1.0)."""
+        clamped = max(0.0, min(1.0, value))
+        with self._lock:
+            self._volume = clamped
+        logger.info("Volume changed to %.2f", clamped)
 
     @property
     def is_speaking(self) -> bool:
@@ -180,7 +198,7 @@ class VoiceManager:
     def _enqueue(self, text: str) -> bool:
         """Queue text with the current voice captured immediately."""
         with self._lock:
-            request = SpeechRequest(text=text, voice=self._voice)
+            request = SpeechRequest(text=text, voice=self._voice, volume=self._volume)
 
         try:
             self._speech_queue.put_nowait(request)
@@ -209,7 +227,7 @@ class VoiceManager:
         self._is_speaking.set()
         try:
             audio_path = self._get_or_create_audio(request)
-            self._play_audio(audio_path)
+            self._play_audio(audio_path, request.volume)
             logger.debug("Spoke using %s: %s", request.voice, request.text[:60])
         except Exception:
             logger.exception("Error during gTTS speech")
@@ -237,14 +255,14 @@ class VoiceManager:
         return path
 
     @staticmethod
-    def _play_audio(path: Path) -> None:
+    def _play_audio(path: Path, volume: float) -> None:
         """Play an MP3 file using the local platform's available player."""
         if sys.platform == "darwin":
-            subprocess.run(["afplay", str(path)], check=True)
+            subprocess.run(["afplay", "-v", str(volume), str(path)], check=True)
             return
 
         if sys.platform == "win32":
-            VoiceManager._play_audio_windows(path)
+            VoiceManager._play_audio_windows(path, volume)
             return
 
         for command in ("ffplay", "mpg123", "mpg321"):
@@ -252,7 +270,9 @@ class VoiceManager:
             if player is None:
                 continue
             if command == "ffplay":
-                args = [player, "-nodisp", "-autoexit", "-loglevel", "quiet", str(path)]
+                args = [player, "-volume", str(int(volume * 100)), "-nodisp", "-autoexit", "-loglevel", "quiet", str(path)]
+            elif command == "mpg123":
+                args = [player, "-f", str(int(volume * 32768)), "-q", str(path)]
             else:
                 args = [player, "-q", str(path)]
             subprocess.run(args, check=True)
@@ -261,7 +281,7 @@ class VoiceManager:
         raise RuntimeError("No supported MP3 playback command found")
 
     @staticmethod
-    def _play_audio_windows(path: Path) -> None:
+    def _play_audio_windows(path: Path, volume: float) -> None:
         """Play an MP3 on Windows using MCI."""
         path_str = str(path)
         mci = ctypes.windll.winmm.mciSendStringW
@@ -275,6 +295,7 @@ class VoiceManager:
             return
             
         try:
+            mci(f'setaudio {alias} volume to {int(volume * 1000)}', None, 0, 0)
             play_res = mci(f'play {alias} wait', None, 0, 0)
             if play_res != 0:
                 logger.error("Failed to play audio file via MCI (code %d)", play_res)

@@ -26,6 +26,7 @@ from constants import (
     DEFAULT_HOTKEY,
     DEFAULT_SENSITIVITY_MULTIPLIER,
     DEFAULT_TTS_VOICE,
+    DEFAULT_VOLUME,
     PROFILE_PATH,
     SETTINGS_PATH,
     TTS_VOICE_OPTIONS,
@@ -69,6 +70,7 @@ class AppSettings:
         launch_at_startup: Whether to launch at OS startup/login.
         show_camera_preview: Whether to show live camera in dashboard.
         hotkey: Global hotkey string for pause/resume.
+        volume: Audio playback volume (0.0 to 1.0).
     """
 
     coach_personality: str = COACH_STANDARD
@@ -80,6 +82,7 @@ class AppSettings:
     launch_at_startup: bool = False
     show_camera_preview: bool = False
     hotkey: str = DEFAULT_HOTKEY
+    volume: float = DEFAULT_VOLUME
 
 
 class ProfileManager:
@@ -240,6 +243,7 @@ class ProfileManager:
             launch_at_startup=data.get("launch_at_startup", defaults.launch_at_startup),
             show_camera_preview=data.get("show_camera_preview", defaults.show_camera_preview),
             hotkey=data.get("hotkey", defaults.hotkey),
+            volume=data.get("volume", defaults.volume),
         )
 
     def save_settings(self, settings: AppSettings) -> bool:
@@ -262,6 +266,7 @@ class ProfileManager:
             "launch_at_startup": settings.launch_at_startup,
             "show_camera_preview": settings.show_camera_preview,
             "hotkey": settings.hotkey,
+            "volume": settings.volume,
         }
         return self._write_json(SETTINGS_PATH, data)
 

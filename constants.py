@@ -151,6 +151,7 @@ COACH_STANDARD: str = "standard"
 COACH_DRILL_SERGEANT: str = "drill_sergeant"
 
 DEFAULT_TTS_VOICE: str = "us"
+DEFAULT_VOLUME: float = 1.0
 TTS_VOICE_OPTIONS: dict[str, dict[str, str]] = {
     "us": {"label": "US English", "lang": "en", "tld": "com"},
     "uk": {"label": "UK English", "lang": "en", "tld": "co.uk"},
@@ -278,8 +279,8 @@ SETTINGS_WINDOW_HEIGHT: int = 700
 CALIBRATION_WINDOW_WIDTH: int = 750
 CALIBRATION_WINDOW_HEIGHT: int = 700
 
-CAMERA_THUMBNAIL_WIDTH: int = 320
-CAMERA_THUMBNAIL_HEIGHT: int = 240
+CAMERA_THUMBNAIL_WIDTH: int = 480
+CAMERA_THUMBNAIL_HEIGHT: int = 360
 
 PRIVACY_NOTE: str = (
     "🔒 Camera feed is processed locally. "

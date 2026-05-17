@@ -115,6 +115,9 @@ class SettingsPanel(ctk.CTkFrame):
         self._voice_var.set(TTS_VOICE_LABELS.get(
             self._settings.tts_voice, TTS_VOICE_LABELS[DEFAULT_TTS_VOICE]
         ))
+        if hasattr(self, '_volume_slider'):
+            self._volume_slider.set(self._settings.volume)
+            self._volume_label.configure(text=f"{int(self._settings.volume * 100)}%")
         self._delay_slider.set(self._settings.alert_delay_sec)
         self._delay_label.configure(text=f"{self._settings.alert_delay_sec:.0f}s")
         self._cooldown_slider.set(self._settings.cooldown_sec)
@@ -204,6 +207,30 @@ class SettingsPanel(ctk.CTkFrame):
             row_voice, text="Test Voice", width=100,
             fg_color=COLOR_ACCENT, command=self._test_voice,
         ).pack(side="left")
+
+        row_vol = ctk.CTkFrame(section, fg_color="transparent")
+        row_vol.pack(fill="x", pady=5)
+        ctk.CTkLabel(row_vol, text="Volume:", width=120,
+                     anchor="w", font=ctk.CTkFont(size=13)).pack(side="left")
+
+        self._volume_label = ctk.CTkLabel(
+            row_vol, text=f"{int(self._settings.volume * 100)}%",
+            width=50, font=ctk.CTkFont(size=12, weight="bold"),
+        )
+        self._volume_slider = ctk.CTkSlider(
+            row_vol, from_=0.0, to=1.0,
+            number_of_steps=20,
+            command=self._on_volume_change, width=200,
+        )
+        self._volume_slider.set(self._settings.volume)
+        self._volume_slider.pack(side="left", padx=5)
+        self._volume_label.pack(side="left")
+
+    def _on_volume_change(self, value: float) -> None:
+        """Handle volume slider change."""
+        self._volume_label.configure(text=f"{int(value * 100)}%")
+        self._settings.volume = value
+        self._save()
 
     def _on_coach_change(self, value: str) -> None:
         """Handle coach personality selection change."""

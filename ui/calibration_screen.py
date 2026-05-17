@@ -461,7 +461,11 @@ class CalibrationPanel(ctk.CTkFrame):
             return
 
         try:
-            self._cap = cv2.VideoCapture(self._camera_index)
+            import sys
+            if sys.platform == "win32":
+                self._cap = cv2.VideoCapture(self._camera_index, cv2.CAP_DSHOW)
+            else:
+                self._cap = cv2.VideoCapture(self._camera_index)
             self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_FRAME_WIDTH)
             self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_FRAME_HEIGHT)
             self._detector = PoseDetector()
@@ -490,7 +494,7 @@ class CalibrationPanel(ctk.CTkFrame):
 
         ret, frame = self._cap.read()
         if not ret:
-            self.after(33, self._update_camera)
+            self.after(5, self._update_camera)
             return
 
         frame = cv2.flip(frame, 1)
@@ -507,14 +511,13 @@ class CalibrationPanel(ctk.CTkFrame):
                 self._finish_capture()
 
         self._display_frame(frame)
-        self.after(33, self._update_camera)
+        self.after(5, self._update_camera)
 
     def _display_frame(self, frame: np.ndarray) -> None:
         """Convert an OpenCV frame and display it in the appropriate label."""
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         img = Image.fromarray(rgb)
-        img = img.resize((420, 315), Image.Resampling.LANCZOS)
-        photo = ImageTk.PhotoImage(img)
+        photo = ctk.CTkImage(light_image=img, size=(480, 360))
 
         target_label = (
             self._capture_camera_label
