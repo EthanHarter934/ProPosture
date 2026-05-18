@@ -16,6 +16,7 @@ from constants import (
     ALL_MEASUREMENTS,
     COACH_DRILL_SERGEANT,
     COACH_STANDARD,
+    COACH_LABELS,
     COLOR_ACCENT,
     COLOR_BAD,
     COLOR_WARNING,
@@ -83,6 +84,7 @@ class SettingsPanel(ctk.CTkFrame):
         self._settings = settings
         self._profile = profile
         self._voice_label_to_key = {label: key for key, label in TTS_VOICE_LABELS.items()}
+        self._coach_label_to_key = {label: key for key, label in COACH_LABELS.items()}
         self._on_save = on_save
         self._on_profile_save = on_profile_save
         self._on_recalibrate = on_recalibrate
@@ -111,7 +113,9 @@ class SettingsPanel(ctk.CTkFrame):
 
     def _refresh_ui_values(self) -> None:
         """Refresh all UI widget values from current settings."""
-        self._coach_var.set(self._settings.coach_personality)
+        self._coach_var.set(COACH_LABELS.get(
+            self._settings.coach_personality, COACH_LABELS[COACH_STANDARD]
+        ))
         self._voice_var.set(TTS_VOICE_LABELS.get(
             self._settings.tts_voice, TTS_VOICE_LABELS[DEFAULT_TTS_VOICE]
         ))
@@ -182,10 +186,12 @@ class SettingsPanel(ctk.CTkFrame):
         ctk.CTkLabel(row_coach, text="Coach Style:", width=120,
                      anchor="w", font=ctk.CTkFont(size=13)).pack(side="left")
 
-        self._coach_var = ctk.StringVar(value=self._settings.coach_personality)
+        self._coach_var = ctk.StringVar(value=COACH_LABELS.get(
+            self._settings.coach_personality, COACH_LABELS[COACH_STANDARD]
+        ))
         ctk.CTkOptionMenu(
             row_coach, variable=self._coach_var,
-            values=["standard", "drill_sergeant"],
+            values=list(COACH_LABELS.values()),
             command=self._on_coach_change, width=200,
         ).pack(side="left", padx=(0, 10))
 
@@ -234,7 +240,7 @@ class SettingsPanel(ctk.CTkFrame):
 
     def _on_coach_change(self, value: str) -> None:
         """Handle coach personality selection change."""
-        self._settings.coach_personality = value
+        self._settings.coach_personality = self._coach_label_to_key.get(value, COACH_STANDARD)
         self._save()
 
     def _on_voice_change(self, value: str) -> None:
@@ -246,7 +252,8 @@ class SettingsPanel(ctk.CTkFrame):
         """Fire the test voice callback."""
         if self._on_test_voice:
             voice_key = self._voice_label_to_key.get(self._voice_var.get(), DEFAULT_TTS_VOICE)
-            self._on_test_voice(self._coach_var.get(), voice_key)
+            coach_key = self._coach_label_to_key.get(self._coach_var.get(), COACH_STANDARD)
+            self._on_test_voice(coach_key, voice_key)
 
     # ═══════════════════════════════════════════
     # SENSITIVITY SLIDERS

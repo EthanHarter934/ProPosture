@@ -149,6 +149,10 @@ DRILL_SERGEANT_VOLUME: float = 1.0
 
 COACH_STANDARD: str = "standard"
 COACH_DRILL_SERGEANT: str = "drill_sergeant"
+COACH_LABELS: dict[str, str] = {
+    COACH_STANDARD: "Standard",
+    COACH_DRILL_SERGEANT: "Drill Sergeant",
+}
 
 DEFAULT_TTS_VOICE: str = "us"
 DEFAULT_VOLUME: float = 1.0
