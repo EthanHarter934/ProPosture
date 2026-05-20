@@ -49,10 +49,15 @@ venv\Scripts\activate
 # 3. Install requirements
 pip install -r requirements.txt
 
-# 4. Pre-download the voice model (this handles network interruptions and resumes broken downloads)
+# 4. Configure Gemini Preprocessing (Optional)
+# Create a `.env` file in the `voice_server/` directory and add your key:
+# GEMINI_API_KEY=your_actual_api_key_here
+# The server will automatically use Gemini to optimize your prompts and hyperparameters!
+
+# 5. Pre-download the voice model (this handles network interruptions and resumes broken downloads)
 huggingface-cli download openbmb/VoxCPM2
 
-# 5. Start the server
+# 6. Start the server
 python server.py --host 0.0.0.0 --port 5123
 ```
 
@@ -61,6 +66,7 @@ python server.py --host 0.0.0.0 --port 5123
 ```bash
 python main.py
 ```
+
 
 The Python backend opens the bundled React UI inside the ProPosture desktop window. On first launch, the **Calibration Wizard** will guide you through setting your personal posture baseline.
 
