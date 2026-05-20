@@ -5,6 +5,7 @@ import {
   Camera,
   Check,
   Gauge,
+  Loader2,
   Mic,
   MonitorStop,
   Pause,
@@ -12,6 +13,7 @@ import {
   RotateCcw,
   Settings,
   SlidersHorizontal,
+  Sparkles,
   Square,
   SunMoon,
   Trash2,
@@ -59,6 +61,7 @@ const bridgeRoutes = {
   "/api/settings/reset": (bridge) => bridge.reset_settings(),
   "/api/profile/sensitivity": (bridge, body) => bridge.save_sensitivity(body.measurement, body.value),
   "/api/voice/test": (bridge, body) => bridge.test_voice(body.personality, body.voice),
+  "/api/voice/generate": (bridge, body) => bridge.generate_custom_voice(body.voice_description, body.voice_server_url),
   "/api/calibration/start": (bridge) => bridge.begin_calibration(),
   "/api/calibration/preview": (bridge) => bridge.start_calibration_preview(),
   "/api/calibration/capture": (bridge) => bridge.start_calibration_capture(),
@@ -349,8 +352,38 @@ function SettingsView({ state, call }) {
   const constants = state.constants;
   const settings = state.settings;
   const profile = state.profile;
-  const coachOptions = Object.entries(constants.coachLabels);
   const voiceOptions = Object.entries(constants.voices);
+  const voiceModeOptions = Object.entries(constants.voiceModes);
+
+  const [voiceDesc, setVoiceDesc] = useState(settings.voice_description || "");
+  const [serverUrl, setServerUrl] = useState(settings.voice_server_url || "http://localhost:5123");
+  const [generating, setGenerating] = useState(false);
+  const [genResult, setGenResult] = useState(null);
+
+  const isCustom = settings.voice_mode === "custom";
+
+  const handleGenerate = async () => {
+    // Save description + server URL first
+    await call("/api/settings", {
+      voice_description: voiceDesc,
+      voice_server_url: serverUrl,
+      voice_mode: "custom",
+    });
+
+    setGenerating(true);
+    setGenResult(null);
+    try {
+      const result = await call("/api/voice/generate", {
+        voice_description: voiceDesc,
+        voice_server_url: serverUrl,
+      });
+      setGenResult(result?.voiceGeneration || { status: "complete" });
+    } catch (err) {
+      setGenResult({ error: err.message });
+    } finally {
+      setGenerating(false);
+    }
+  };
 
   return (
     <section className="space-y-4">
@@ -358,21 +391,76 @@ function SettingsView({ state, call }) {
       <div className="grid gap-4 lg:grid-cols-2">
         <Panel>
           <SectionTitle icon={Mic} title="Voice" />
-          <Field label="Coach Style">
-            <select className="input" value={settings.coach_personality} onChange={(e) => call("/api/settings", { coach_personality: e.target.value })}>
-              {coachOptions.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+          <Field label="Voice Mode">
+            <select className="input" value={settings.voice_mode} onChange={(e) => call("/api/settings", { voice_mode: e.target.value })}>
+              {voiceModeOptions.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
             </select>
           </Field>
-          <Field label="gTTS Voice">
-            <div className="flex gap-2">
-              <select className="input" value={settings.tts_voice} onChange={(e) => call("/api/settings", { tts_voice: e.target.value })}>
-                {voiceOptions.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
-              </select>
-              <button className="icon-button" title="Test voice" onClick={() => call("/api/voice/test", { personality: settings.coach_personality, voice: settings.tts_voice })}>
-                <Volume2 size={18} />
-              </button>
-            </div>
-          </Field>
+
+          {!isCustom ? (
+            <>
+              <Field label="gTTS Voice">
+                <div className="flex gap-2">
+                  <select className="input" value={settings.tts_voice} onChange={(e) => call("/api/settings", { tts_voice: e.target.value })}>
+                    {voiceOptions.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+                  </select>
+                  <button className="icon-button" title="Test voice" onClick={() => call("/api/voice/test", { personality: settings.coach_personality, voice: settings.tts_voice })}>
+                    <Volume2 size={18} />
+                  </button>
+                </div>
+              </Field>
+            </>
+          ) : (
+            <>
+              <Field label="Voice Description">
+                <textarea
+                  id="voice-description-input"
+                  className="input min-h-[100px] resize-y"
+                  placeholder="Describe your ideal voice, e.g.: A warm, friendly male voice with a calm and encouraging tone. Speaks at a moderate pace with clear articulation."
+                  value={voiceDesc}
+                  onChange={(e) => setVoiceDesc(e.target.value)}
+                  onBlur={() => call("/api/settings", { voice_description: voiceDesc })}
+                />
+                <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                  Describe gender, age, tone, pitch, pace, emotion — be as specific as you like.
+                </p>
+              </Field>
+              <Field label="Voice Server URL">
+                <input
+                  id="voice-server-url-input"
+                  className="input"
+                  type="text"
+                  placeholder="http://localhost:5123"
+                  value={serverUrl}
+                  onChange={(e) => setServerUrl(e.target.value)}
+                  onBlur={() => call("/api/settings", { voice_server_url: serverUrl })}
+                />
+              </Field>
+              <div className="mt-4">
+                <button
+                  id="generate-voice-button"
+                  className="primary-button w-full disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={generating || !voiceDesc.trim()}
+                  onClick={handleGenerate}
+                >
+                  {generating ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
+                  {generating ? "Generating Voice…" : "Generate Voice"}
+                </button>
+              </div>
+              {genResult && (
+                <div className={`mt-3 rounded-md border px-3 py-2 text-sm ${
+                  genResult.error
+                    ? "border-rose-300 bg-rose-50 text-rose-700 dark:border-rose-800 dark:bg-rose-950 dark:text-rose-200"
+                    : "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-200"
+                }`}>
+                  {genResult.error
+                    ? `Error: ${genResult.error}`
+                    : `✓ Voice generated! ${genResult.generated || 0} new lines created, ${genResult.cached || 0} already cached.`}
+                </div>
+              )}
+            </>
+          )}
+
           <div className="mt-4">
             <Slider label="Volume" value={settings.volume} suffix="%" range={constants.ranges.volume} format={(value) => Math.round(value * 100)} onChange={(value) => call("/api/settings", { volume: value })} />
           </div>

@@ -27,13 +27,16 @@ from constants import (
     CAMERA_THUMBNAIL_HEIGHT,
     CAMERA_THUMBNAIL_WIDTH,
     COACH_LABELS,
+    COACH_LINES,
     COLOR_BAD,
     COLOR_GOOD,
     COLOR_INACTIVE,
     COLOR_WARNING,
+    CUSTOM_VOICE_CACHE_DIR,
     DEFAULT_ALERT_DELAY_SEC,
     DEFAULT_COOLDOWN_SEC,
     DEFAULT_SENSITIVITY_MULTIPLIER,
+    DEFAULT_VOICE_SERVER_URL,
     MAX_ALERT_DELAY_SEC,
     MAX_COOLDOWN_SEC,
     MAX_SENSITIVITY_MULTIPLIER,
@@ -51,6 +54,9 @@ from constants import (
     STATUS_WARNING,
     STABILITY_THRESHOLD,
     TTS_VOICE_LABELS,
+    VOICE_MODE_CUSTOM,
+    VOICE_MODE_LABELS,
+    VOICE_MODE_STANDARD,
 )
 from core.alert_engine import AlertEngine
 from core.calibration import CalibrationResult, CalibrationSession
@@ -92,6 +98,9 @@ class AppController:
             personality=settings.coach_personality,
             voice=settings.tts_voice,
             volume=settings.volume,
+            voice_mode=settings.voice_mode,
+            voice_description=settings.voice_description,
+            voice_server_url=settings.voice_server_url,
         )
 
         self._lock = threading.RLock()
@@ -157,6 +166,7 @@ class AppController:
             "measurementLabels": MEASUREMENT_DISPLAY_NAMES,
             "coachLabels": COACH_LABELS,
             "voices": TTS_VOICE_LABELS,
+            "voiceModes": VOICE_MODE_LABELS,
             "ranges": {
                 "sensitivity": {
                     "min": MIN_SENSITIVITY_MULTIPLIER,
@@ -296,6 +306,9 @@ class AppController:
             self._voice_manager.personality = self._settings.coach_personality
             self._voice_manager.voice = self._settings.tts_voice
             self._voice_manager.volume = self._settings.volume
+            self._voice_manager.voice_mode = self._settings.voice_mode
+            self._voice_manager.voice_description = self._settings.voice_description
+            self._voice_manager.voice_server_url = self._settings.voice_server_url
 
         logger.debug("Settings saved and applied")
         return self.state()
@@ -331,6 +344,101 @@ class AppController:
         self._voice_manager.personality = old_personality
         self._voice_manager.voice = old_voice
         return self.state()
+
+    def generate_custom_voice(self, voice_description: str, voice_server_url: str) -> dict[str, Any]:
+        """
+        Pre-generate all coach lines using the VoxCPM2 server.
+
+        This downloads audio for every standard coach line so they are cached
+        and ready for instant playback during monitoring.
+
+        Returns the current state with a 'voiceGeneration' key showing progress.
+        """
+        import hashlib
+        import json
+        import urllib.request
+
+        if not voice_description.strip():
+            return {**self.state(), "voiceGeneration": {"error": "Voice description is empty"}}
+
+        if not voice_server_url.strip():
+            voice_server_url = DEFAULT_VOICE_SERVER_URL
+
+        # Collect all unique coach lines
+        all_prompts: dict[str, str] = {}
+        for personality_lines in COACH_LINES.values():
+            for measurement, lines in personality_lines.items():
+                for i, line in enumerate(lines):
+                    key = hashlib.sha256(
+                        f"{voice_description}\0{line}".encode("utf-8")
+                    ).hexdigest()[:16]
+                    all_prompts[key] = line
+
+        # Check which are already cached
+        CUSTOM_VOICE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        needed: dict[str, str] = {}
+        for key, text in all_prompts.items():
+            cache_key = hashlib.sha256(
+                f"{voice_description}\0{text}".encode("utf-8")
+            ).hexdigest()
+            cached_path = CUSTOM_VOICE_CACHE_DIR / f"{cache_key}.wav"
+            if not (cached_path.exists() and cached_path.stat().st_size > 0):
+                needed[key] = text
+
+        if not needed:
+            logger.info("All custom voice lines already cached")
+            return {**self.state(), "voiceGeneration": {"status": "complete", "cached": len(all_prompts), "generated": 0}}
+
+        # Generate via voice server batch endpoint
+        url = f"{voice_server_url.rstrip('/')}/generate"
+        payload = json.dumps({
+            "voice_description": voice_description,
+            "prompts": needed,
+        }).encode("utf-8")
+
+        logger.info("Requesting %d custom voice lines from %s", len(needed), url)
+
+        try:
+            req = urllib.request.Request(
+                url,
+                data=payload,
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=600) as response:
+                zip_data = response.read()
+        except Exception as exc:
+            logger.exception("Failed to generate custom voice")
+            return {**self.state(), "voiceGeneration": {"error": str(exc)}}
+
+        # Extract WAV files from ZIP and save to cache
+        import zipfile
+        import io
+
+        generated_count = 0
+        with zipfile.ZipFile(io.BytesIO(zip_data)) as zf:
+            for name in zf.namelist():
+                if not name.endswith(".wav"):
+                    continue
+                zip_key = name[:-4]  # Strip .wav
+                text = needed.get(zip_key, "")
+                if not text:
+                    continue
+                cache_key = hashlib.sha256(
+                    f"{voice_description}\0{text}".encode("utf-8")
+                ).hexdigest()
+                cached_path = CUSTOM_VOICE_CACHE_DIR / f"{cache_key}.wav"
+                cached_path.write_bytes(zf.read(name))
+                generated_count += 1
+
+        logger.info("Generated %d custom voice lines", generated_count)
+        return {
+            **self.state(),
+            "voiceGeneration": {
+                "status": "complete",
+                "cached": len(all_prompts) - len(needed),
+                "generated": generated_count,
+            },
+        }
 
     def begin_calibration(self) -> dict[str, Any]:
         """Reset the calibration flow to the education step."""
@@ -580,6 +688,9 @@ class AppController:
         return {
             "coach_personality": self._settings.coach_personality,
             "tts_voice": self._settings.tts_voice,
+            "voice_mode": self._settings.voice_mode,
+            "voice_description": self._settings.voice_description,
+            "voice_server_url": self._settings.voice_server_url,
             "alert_delay_sec": self._settings.alert_delay_sec,
             "cooldown_sec": self._settings.cooldown_sec,
             "camera_index": self._settings.camera_index,

@@ -32,7 +32,31 @@ npm install
 npm run build
 ```
 
-### 2. Run
+### 2. Run the VoxCPM2 Voice Server (Optional)
+
+If you want to use the Custom Voice (VoxCPM2) feature, you need to run the voice generation server on a CUDA-capable machine. This only needs to be run once and can be hosted on a separate machine if needed.
+
+```bash
+cd voice_server
+
+# 1. Create a Python 3.11 virtual environment (newer Python versions may fail to install PyTorch/Pythonnet)
+py -3.11 -m venv venv
+
+# 2. Activate the environment (Windows)
+venv\Scripts\activate
+# OR macOS/Linux: source venv/bin/activate
+
+# 3. Install requirements
+pip install -r requirements.txt
+
+# 4. Pre-download the voice model (this handles network interruptions and resumes broken downloads)
+huggingface-cli download openbmb/VoxCPM2
+
+# 5. Start the server
+python server.py --host 0.0.0.0 --port 5123
+```
+
+### 3. Run the App
 
 ```bash
 python main.py
@@ -40,9 +64,10 @@ python main.py
 
 The Python backend opens the bundled React UI inside the ProPosture desktop window. On first launch, the **Calibration Wizard** will guide you through setting your personal posture baseline.
 
-### 3. Use
+### 4. Use
 
 - The app monitors your posture via webcam and alerts you with spoken feedback.
+- To use custom voices, go to **Settings > Voice**, select **Custom Voice (VoxCPM2)**, type a voice description, and click **Generate Voice**.
 - **Minimize** the window to send it to the system tray.
 - **Right-click the tray icon** for quick access to Pause, Resume, Recalibrate, or Quit.
 - Press **Ctrl+Shift+P** anywhere to toggle pause on platforms supported by the `keyboard` package.

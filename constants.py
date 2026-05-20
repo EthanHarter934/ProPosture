@@ -141,16 +141,22 @@ DEFAULT_HOTKEY: str = "ctrl+shift+p"
 # ═══════════════════════════════════════════════
 
 STANDARD_SPEECH_RATE: int = 175  # words per minute
-DRILL_SERGEANT_SPEECH_RATE: int = 220
 STANDARD_VOLUME: float = 0.9
-DRILL_SERGEANT_VOLUME: float = 1.0
 
 COACH_STANDARD: str = "standard"
-COACH_DRILL_SERGEANT: str = "drill_sergeant"
 COACH_LABELS: dict[str, str] = {
     COACH_STANDARD: "Standard",
-    COACH_DRILL_SERGEANT: "Drill Sergeant",
 }
+
+# ── Voice Mode ──────────────────────────────────
+# "standard" = gTTS voices, "custom" = VoxCPM2 server with user description
+VOICE_MODE_STANDARD: str = "standard"
+VOICE_MODE_CUSTOM: str = "custom"
+VOICE_MODE_LABELS: dict[str, str] = {
+    VOICE_MODE_STANDARD: "Standard TTS",
+    VOICE_MODE_CUSTOM: "Custom Voice (VoxCPM2)",
+}
+DEFAULT_VOICE_MODE: str = VOICE_MODE_STANDARD
 
 DEFAULT_TTS_VOICE: str = "us"
 DEFAULT_VOLUME: float = 1.0
@@ -164,6 +170,11 @@ TTS_VOICE_OPTIONS: dict[str, dict[str, str]] = {
 TTS_VOICE_LABELS: dict[str, str] = {
     key: config["label"] for key, config in TTS_VOICE_OPTIONS.items()
 }
+
+# ── VoxCPM2 Voice Server ────────────────────────
+DEFAULT_VOICE_SERVER_URL: str = "http://localhost:5123"
+CUSTOM_VOICE_CACHE_DIR: Path = APP_DATA_DIR / "custom_voice_cache"
+DEFAULT_VOICE_DESCRIPTION: str = ""
 
 # ═══════════════════════════════════════════════
 # MEASUREMENT NAMES (used as dict keys everywhere)
@@ -225,18 +236,6 @@ COACH_LINES: dict[str, dict[str, list[str]]] = {
             "Sit up straighter.",
             "Lift your chest and bring your shoulders back to your usual height.",
             "Straighten your spine and return your shoulders to your calibrated position.",
-        ],
-    },
-    COACH_DRILL_SERGEANT: {
-        MEASURE_NOSE_SHOULDER_VERTICAL_GAP: [
-            "HEAD UP. EYES FORWARD. FIX IT.",
-            "Lift your head right now.",
-            "Chin up and posture tall.",
-        ],
-        MEASURE_SHOULDER_SCREEN_Y: [
-            "SIT UP STRAIGHT. SHOULDERS UP.",
-            "Stop slouching and raise those shoulders.",
-            "Straighten your spine and get back to position.",
         ],
     },
 }

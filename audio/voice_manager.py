@@ -1,12 +1,14 @@
 """
 Voice Manager Module
 
-Manages text-to-speech output for coach personalities using gTTS. Speech
-requests run on a dedicated daemon thread so network generation and audio
-playback do not block the UI or detection threads.
+Manages text-to-speech output for coach personalities using either gTTS
+(standard mode) or VoxCPM2 server (custom voice mode). Speech requests run
+on a dedicated daemon thread so network generation and audio playback do
+not block the UI or detection threads.
 """
 
 import hashlib
+import io
 import logging
 import os
 import queue
@@ -25,9 +27,14 @@ from gtts import gTTS
 from constants import (
     COACH_LINES,
     COACH_STANDARD,
+    CUSTOM_VOICE_CACHE_DIR,
     DEFAULT_TTS_VOICE,
+    DEFAULT_VOICE_MODE,
+    DEFAULT_VOICE_SERVER_URL,
     TTS_CACHE_DIR,
     TTS_VOICE_OPTIONS,
+    VOICE_MODE_CUSTOM,
+    VOICE_MODE_STANDARD,
 )
 from core.alert_engine import Alert
 
@@ -41,15 +48,19 @@ class SpeechRequest:
     text: str
     voice: str
     volume: float = 1.0
+    voice_mode: str = VOICE_MODE_STANDARD
+    voice_description: str = ""
+    voice_server_url: str = DEFAULT_VOICE_SERVER_URL
 
 
 class VoiceManager:
     """
-    Manages gTTS output with configurable coach personalities and voices.
+    Manages TTS output with configurable coach personalities and voices.
 
-    Alert text is selected from the current personality's pool. The selected
-    gTTS voice is stored with each queued item, preventing later settings
-    changes from affecting already queued test lines or alerts.
+    Supports two voice modes:
+    - "standard": Uses gTTS for text-to-speech.
+    - "custom": Calls the VoxCPM2 server to generate audio with a user-
+      defined voice description, then caches and plays the resulting WAV.
     """
 
     def __init__(
@@ -57,6 +68,9 @@ class VoiceManager:
         personality: str = COACH_STANDARD,
         voice: str = DEFAULT_TTS_VOICE,
         volume: float = 1.0,
+        voice_mode: str = DEFAULT_VOICE_MODE,
+        voice_description: str = "",
+        voice_server_url: str = DEFAULT_VOICE_SERVER_URL,
     ) -> None:
         """
         Initialize the voice manager.
@@ -64,10 +78,17 @@ class VoiceManager:
         Args:
             personality: Initial coach personality key.
             voice: Initial gTTS voice/accent key.
+            volume: Audio volume (0.0 to 1.0).
+            voice_mode: "standard" or "custom".
+            voice_description: Natural language voice description for VoxCPM2.
+            voice_server_url: URL of the VoxCPM2 voice server.
         """
         self._personality = personality
         self._voice = self._normalize_voice(voice)
         self._volume = max(0.0, min(1.0, volume))
+        self._voice_mode = voice_mode
+        self._voice_description = voice_description
+        self._voice_server_url = voice_server_url
         self._speech_queue: queue.Queue[Optional[SpeechRequest]] = queue.Queue(maxsize=5)
         self._is_speaking = threading.Event()
         self._shutdown = threading.Event()
@@ -75,6 +96,7 @@ class VoiceManager:
         self._lock = threading.Lock()
 
         TTS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        CUSTOM_VOICE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
         self._thread = threading.Thread(
             target=self._speech_loop,
@@ -83,10 +105,12 @@ class VoiceManager:
         )
         self._thread.start()
         logger.info(
-            "VoiceManager initialized with personality=%s, voice=%s, volume=%.2f",
+            "VoiceManager initialized with personality=%s, voice=%s, "
+            "volume=%.2f, voice_mode=%s",
             personality,
             self._voice,
             self._volume,
+            self._voice_mode,
         )
 
     @property
@@ -129,6 +153,45 @@ class VoiceManager:
         with self._lock:
             self._volume = clamped
         logger.info("Volume changed to %.2f", clamped)
+
+    @property
+    def voice_mode(self) -> str:
+        """Current voice mode ('standard' or 'custom')."""
+        with self._lock:
+            return self._voice_mode
+
+    @voice_mode.setter
+    def voice_mode(self, value: str) -> None:
+        """Set the voice mode."""
+        with self._lock:
+            self._voice_mode = value
+        logger.info("Voice mode changed to %s", value)
+
+    @property
+    def voice_description(self) -> str:
+        """Current custom voice description for VoxCPM2."""
+        with self._lock:
+            return self._voice_description
+
+    @voice_description.setter
+    def voice_description(self, value: str) -> None:
+        """Set the custom voice description."""
+        with self._lock:
+            self._voice_description = value
+        logger.info("Voice description updated")
+
+    @property
+    def voice_server_url(self) -> str:
+        """Current VoxCPM2 voice server URL."""
+        with self._lock:
+            return self._voice_server_url
+
+    @voice_server_url.setter
+    def voice_server_url(self, value: str) -> None:
+        """Set the VoxCPM2 voice server URL."""
+        with self._lock:
+            self._voice_server_url = value.rstrip("/")
+        logger.info("Voice server URL changed to %s", value)
 
     @property
     def is_speaking(self) -> bool:
@@ -196,9 +259,16 @@ class VoiceManager:
         return self._enqueue(text)
 
     def _enqueue(self, text: str) -> bool:
-        """Queue text with the current voice captured immediately."""
+        """Queue text with the current voice settings captured immediately."""
         with self._lock:
-            request = SpeechRequest(text=text, voice=self._voice, volume=self._volume)
+            request = SpeechRequest(
+                text=text,
+                voice=self._voice,
+                volume=self._volume,
+                voice_mode=self._voice_mode,
+                voice_description=self._voice_description,
+                voice_server_url=self._voice_server_url,
+            )
 
         try:
             self._speech_queue.put_nowait(request)
@@ -223,14 +293,17 @@ class VoiceManager:
         logger.info("VoiceManager speech loop exited")
 
     def _speak_one(self, request: SpeechRequest) -> None:
-        """Generate cached gTTS audio and play it synchronously."""
+        """Generate audio and play it synchronously."""
         self._is_speaking.set()
         try:
-            audio_path = self._get_or_create_audio(request)
+            if request.voice_mode == VOICE_MODE_CUSTOM and request.voice_description:
+                audio_path = self._get_or_create_custom_audio(request)
+            else:
+                audio_path = self._get_or_create_audio(request)
             self._play_audio(audio_path, request.volume)
-            logger.debug("Spoke using %s: %s", request.voice, request.text[:60])
+            logger.debug("Spoke using %s: %s", request.voice_mode, request.text[:60])
         except Exception:
-            logger.exception("Error during gTTS speech")
+            logger.exception("Error during speech")
         finally:
             self._is_speaking.clear()
 
@@ -254,9 +327,49 @@ class VoiceManager:
         tts.save(str(path))
         return path
 
+    def _get_or_create_custom_audio(self, request: SpeechRequest) -> Path:
+        """
+        Return a cached WAV path, generating via the VoxCPM2 server if needed.
+
+        Calls the voice server's /generate_single endpoint to produce a WAV
+        file with the user's custom voice description applied to the text.
+        """
+        import urllib.request
+        import json
+
+        cache_key = hashlib.sha256(
+            f"{request.voice_description}\0{request.text}".encode("utf-8")
+        ).hexdigest()
+        path = CUSTOM_VOICE_CACHE_DIR / f"{cache_key}.wav"
+
+        if path.exists() and path.stat().st_size > 0:
+            return path
+
+        url = f"{request.voice_server_url}/generate_single"
+        payload = json.dumps({
+            "voice_description": request.voice_description,
+            "text": request.text,
+        }).encode("utf-8")
+
+        req = urllib.request.Request(
+            url,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+
+        logger.info("Requesting custom voice audio from %s", url)
+        with urllib.request.urlopen(req, timeout=120) as response:
+            wav_data = response.read()
+
+        path.write_bytes(wav_data)
+        logger.info("Custom voice audio cached: %s (%d bytes)", path.name, len(wav_data))
+        return path
+
     @staticmethod
     def _play_audio(path: Path, volume: float) -> None:
-        """Play an MP3 file using the local platform's available player."""
+        """Play an audio file using the local platform's available player."""
+        suffix = path.suffix.lower()
+
         if sys.platform == "darwin":
             subprocess.run(["afplay", "-v", str(volume), str(path)], check=True)
             return
@@ -278,11 +391,11 @@ class VoiceManager:
             subprocess.run(args, check=True)
             return
 
-        raise RuntimeError("No supported MP3 playback command found")
+        raise RuntimeError("No supported audio playback command found")
 
     @staticmethod
     def _play_audio_windows(path: Path, volume: float) -> None:
-        """Play an MP3 on Windows using MCI."""
+        """Play an audio file on Windows using MCI."""
         path_str = str(path)
         mci = ctypes.windll.winmm.mciSendStringW
         
