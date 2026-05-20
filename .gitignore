@@ -4,3 +4,4 @@ venv
 .venv
 build/
 dist/
+node_modules/

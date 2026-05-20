@@ -1,0 +1,667 @@
+"""
+Application controller for the React UI.
+
+This module owns the runtime behavior behind the React desktop interface:
+monitoring, calibration, settings persistence, voice tests, and frame previews.
+The posture, calibration, profile, audio, and startup logic remain in the
+existing Python backend modules.
+"""
+
+from __future__ import annotations
+
+import base64
+import logging
+import sys
+import threading
+import time
+from typing import Any, Optional
+
+import cv2
+import numpy as np
+
+from audio.voice_manager import VoiceManager
+from constants import (
+    ALL_MEASUREMENTS,
+    CAMERA_FRAME_HEIGHT,
+    CAMERA_FRAME_WIDTH,
+    CAMERA_THUMBNAIL_HEIGHT,
+    CAMERA_THUMBNAIL_WIDTH,
+    COACH_LABELS,
+    COLOR_BAD,
+    COLOR_GOOD,
+    COLOR_INACTIVE,
+    COLOR_WARNING,
+    DEFAULT_ALERT_DELAY_SEC,
+    DEFAULT_COOLDOWN_SEC,
+    DEFAULT_SENSITIVITY_MULTIPLIER,
+    MAX_ALERT_DELAY_SEC,
+    MAX_COOLDOWN_SEC,
+    MAX_SENSITIVITY_MULTIPLIER,
+    MEASUREMENT_DISPLAY_NAMES,
+    MIN_ALERT_DELAY_SEC,
+    MIN_COOLDOWN_SEC,
+    MIN_SENSITIVITY_MULTIPLIER,
+    PRIVACY_NOTE,
+    SNOOZE_DURATION_SEC,
+    STATUS_BAD,
+    STATUS_GOOD,
+    STATUS_NO_DETECTION,
+    STATUS_WARNING,
+    STABILITY_THRESHOLD,
+    TTS_VOICE_LABELS,
+)
+from core.alert_engine import AlertEngine
+from core.calibration import CalibrationResult, CalibrationSession
+from core.pose_detector import PoseDetector
+from core.posture_analyzer import PostureAnalyzer, PostureStatus
+from core.startup import (
+    get_startup_label,
+    is_startup_supported,
+    set_launch_at_startup,
+)
+from data.profile_manager import AppSettings, CalibrationProfile, ProfileManager
+
+logger = logging.getLogger(__name__)
+
+VIEW_DASHBOARD = "dashboard"
+VIEW_CALIBRATION = "calibration"
+VIEW_SETTINGS = "settings"
+
+
+class AppController:
+    """Thread-safe controller used by the desktop bridge and tray callbacks."""
+
+    def __init__(
+        self,
+        profile_manager: ProfileManager,
+        settings: AppSettings,
+        profile: Optional[CalibrationProfile],
+    ) -> None:
+        self._pm = profile_manager
+        self._settings = settings
+        self._profile = profile
+
+        self._analyzer = PostureAnalyzer()
+        self._alert_engine = AlertEngine(
+            alert_delay=settings.alert_delay_sec,
+            cooldown=settings.cooldown_sec,
+        )
+        self._voice_manager = VoiceManager(
+            personality=settings.coach_personality,
+            voice=settings.tts_voice,
+            volume=settings.volume,
+        )
+
+        self._lock = threading.RLock()
+        self._monitoring = False
+        self._monitor_stop = threading.Event()
+        self._monitor_thread: Optional[threading.Thread] = None
+        self._monitor_cap: Optional[cv2.VideoCapture] = None
+        self._current_status = STATUS_NO_DETECTION
+        self._current_monitor_jpeg: Optional[bytes] = None
+        self._session_start = 0.0
+        self._alert_count = 0
+        self._good_streak_start = 0.0
+        self._longest_good_streak = 0.0
+
+        self._calibration_step = 0
+        self._calibration_session = CalibrationSession()
+        self._calibration_result: Optional[CalibrationResult] = None
+        self._calibration_running = False
+        self._calibration_stop = threading.Event()
+        self._calibration_thread: Optional[threading.Thread] = None
+        self._calibration_cap: Optional[cv2.VideoCapture] = None
+        self._calibration_detector: Optional[PoseDetector] = None
+        self._current_calibration_jpeg: Optional[bytes] = None
+        self._calibration_measurements: dict[str, float] = {}
+        self._calibration_stability = 0.0
+
+        self._active_view = VIEW_CALIBRATION if profile is None else VIEW_DASHBOARD
+
+    def state(self) -> dict[str, Any]:
+        """Return a serializable snapshot for the React app."""
+        with self._lock:
+            elapsed = time.time() - self._session_start if self._session_start else 0.0
+            return {
+                "view": self._active_view,
+                "needsCalibration": self._profile is None,
+                "monitoring": self._monitoring,
+                "paused": self._alert_engine.is_paused,
+                "snoozed": self._alert_engine.is_snoozed,
+                "headerStatus": self._header_status(),
+                "postureStatus": self._current_status,
+                "postureDetail": self._posture_detail(self._current_status),
+                "session": {
+                    "elapsed": elapsed,
+                    "elapsedLabel": self._format_duration(elapsed),
+                    "alerts": self._alert_count,
+                    "bestStreak": self._longest_good_streak,
+                    "bestStreakLabel": self._format_duration(self._longest_good_streak),
+                },
+                "settings": self._settings_payload(),
+                "profile": self._profile_payload(),
+                "calibration": self._calibration_payload(),
+                "constants": self.constants_payload(),
+            }
+
+    def constants_payload(self) -> dict[str, Any]:
+        """Return UI constants that come from the Python backend."""
+        return {
+            "measurements": ALL_MEASUREMENTS,
+            "measurementLabels": MEASUREMENT_DISPLAY_NAMES,
+            "coachLabels": COACH_LABELS,
+            "voices": TTS_VOICE_LABELS,
+            "ranges": {
+                "sensitivity": {
+                    "min": MIN_SENSITIVITY_MULTIPLIER,
+                    "max": MAX_SENSITIVITY_MULTIPLIER,
+                    "step": 0.1,
+                    "default": DEFAULT_SENSITIVITY_MULTIPLIER,
+                },
+                "alertDelay": {
+                    "min": MIN_ALERT_DELAY_SEC,
+                    "max": MAX_ALERT_DELAY_SEC,
+                    "step": 1,
+                    "default": DEFAULT_ALERT_DELAY_SEC,
+                },
+                "cooldown": {
+                    "min": MIN_COOLDOWN_SEC,
+                    "max": MAX_COOLDOWN_SEC,
+                    "step": 5,
+                    "default": DEFAULT_COOLDOWN_SEC,
+                },
+                "volume": {
+                    "min": 0.0,
+                    "max": 1.0,
+                    "step": 0.05,
+                    "default": 1.0,
+                },
+            },
+            "cameraIndexes": [0, 1, 2, 3, 4],
+            "stabilityThreshold": STABILITY_THRESHOLD,
+            "startupSupported": is_startup_supported(),
+            "startupLabel": get_startup_label(),
+            "privacyNote": PRIVACY_NOTE,
+            "colors": {
+                STATUS_GOOD: COLOR_GOOD,
+                STATUS_WARNING: COLOR_WARNING,
+                STATUS_BAD: COLOR_BAD,
+                STATUS_NO_DETECTION: COLOR_INACTIVE,
+            },
+        }
+
+    def set_view(self, view: str) -> dict[str, Any]:
+        """Set the active frontend view."""
+        if view not in {VIEW_DASHBOARD, VIEW_CALIBRATION, VIEW_SETTINGS}:
+            raise ValueError("Unknown view")
+        if view != VIEW_CALIBRATION:
+            self.stop_calibration_camera()
+        with self._lock:
+            self._active_view = view
+        return self.state()
+
+    def start_monitoring(self) -> dict[str, Any]:
+        """Start posture monitoring."""
+        with self._lock:
+            if self._profile is None:
+                self._active_view = VIEW_CALIBRATION
+                return self.state()
+            if self._monitoring:
+                return self.state()
+
+            self.stop_calibration_camera()
+            self._monitor_stop.clear()
+            self._monitoring = True
+            self._session_start = time.time()
+            self._alert_count = 0
+            self._good_streak_start = time.time()
+            self._longest_good_streak = 0.0
+
+        self._monitor_thread = threading.Thread(
+            target=self._monitor_loop,
+            name="Monitoring-Thread",
+            daemon=True,
+        )
+        self._monitor_thread.start()
+        logger.info("Monitoring started")
+        return self.state()
+
+    def stop_monitoring(self) -> dict[str, Any]:
+        """Stop posture monitoring."""
+        self._monitor_stop.set()
+        with self._lock:
+            self._monitoring = False
+            self._current_status = STATUS_NO_DETECTION
+        if self._monitor_cap is not None:
+            self._monitor_cap.release()
+            self._monitor_cap = None
+        logger.info("Monitoring stopped")
+        return self.state()
+
+    def toggle_monitoring(self) -> dict[str, Any]:
+        """Toggle monitoring on or off."""
+        return self.stop_monitoring() if self._monitoring else self.start_monitoring()
+
+    def snooze(self) -> dict[str, Any]:
+        """Snooze alerts for the configured duration."""
+        self._alert_engine.snooze(SNOOZE_DURATION_SEC)
+        logger.info("Monitoring snoozed for 15 minutes")
+        return self.state()
+
+    def toggle_pause(self) -> dict[str, Any]:
+        """Pause or resume alert evaluation."""
+        if self._alert_engine.is_paused:
+            self._alert_engine.resume()
+        else:
+            self._alert_engine.pause()
+        return self.state()
+
+    def resume_alerts(self) -> dict[str, Any]:
+        """Resume alerts immediately, clearing any active snooze."""
+        self._alert_engine.reset()
+        return self.state()
+
+    def save_settings(self, updates: dict[str, Any]) -> dict[str, Any]:
+        """Persist and apply settings updates from the React app."""
+        with self._lock:
+            for key, value in updates.items():
+                if not hasattr(self._settings, key):
+                    continue
+                setattr(self._settings, key, value)
+
+            self._settings.alert_delay_sec = float(self._settings.alert_delay_sec)
+            self._settings.cooldown_sec = float(self._settings.cooldown_sec)
+            self._settings.camera_index = int(self._settings.camera_index)
+            self._settings.dark_mode = bool(self._settings.dark_mode)
+            self._settings.launch_at_startup = bool(self._settings.launch_at_startup)
+            self._settings.show_camera_preview = bool(self._settings.show_camera_preview)
+            self._settings.volume = max(0.0, min(1.0, float(self._settings.volume)))
+
+            if "launch_at_startup" in updates:
+                enabled = self._settings.launch_at_startup
+                if not set_launch_at_startup(enabled):
+                    self._settings.launch_at_startup = False
+
+            self._pm.save_settings(self._settings)
+            self._alert_engine.alert_delay = self._settings.alert_delay_sec
+            self._alert_engine.cooldown = self._settings.cooldown_sec
+            self._voice_manager.personality = self._settings.coach_personality
+            self._voice_manager.voice = self._settings.tts_voice
+            self._voice_manager.volume = self._settings.volume
+
+        logger.debug("Settings saved and applied")
+        return self.state()
+
+    def reset_settings(self) -> dict[str, Any]:
+        """Reset application settings to defaults."""
+        if self._settings.launch_at_startup:
+            set_launch_at_startup(False)
+        with self._lock:
+            if self._profile is not None:
+                for name in ALL_MEASUREMENTS:
+                    self._profile.sensitivity_multipliers[name] = DEFAULT_SENSITIVITY_MULTIPLIER
+                self._pm.save_profile(self._profile)
+        return self.save_settings(AppSettings().__dict__)
+
+    def save_sensitivity(self, measurement: str, value: float) -> dict[str, Any]:
+        """Persist a sensitivity multiplier for the current profile."""
+        if measurement not in ALL_MEASUREMENTS:
+            raise ValueError("Unknown measurement")
+        with self._lock:
+            if self._profile is not None:
+                self._profile.sensitivity_multipliers[measurement] = round(float(value), 1)
+                self._pm.save_profile(self._profile)
+        return self.state()
+
+    def test_voice(self, personality: str, voice: str) -> dict[str, Any]:
+        """Play the selected test voice without permanently changing settings."""
+        old_personality = self._voice_manager.personality
+        old_voice = self._voice_manager.voice
+        self._voice_manager.personality = personality
+        self._voice_manager.voice = voice
+        self._voice_manager.speak_text("This is how I'll sound when I coach you.")
+        self._voice_manager.personality = old_personality
+        self._voice_manager.voice = old_voice
+        return self.state()
+
+    def begin_calibration(self) -> dict[str, Any]:
+        """Reset the calibration flow to the education step."""
+        self.stop_monitoring()
+        self.stop_calibration_camera()
+        with self._lock:
+            self._active_view = VIEW_CALIBRATION
+            self._calibration_step = 0
+            self._calibration_session.reset()
+            self._calibration_result = None
+            self._calibration_measurements = {}
+            self._calibration_stability = 0.0
+            self._current_calibration_jpeg = None
+        return self.state()
+
+    def start_calibration_preview(self) -> dict[str, Any]:
+        """Move to the live calibration preview step and start camera capture."""
+        self.stop_monitoring()
+        with self._lock:
+            self._active_view = VIEW_CALIBRATION
+            self._calibration_step = 1
+            self._calibration_session.reset()
+            self._calibration_result = None
+            self._calibration_stop.clear()
+        self._ensure_calibration_camera()
+        return self.state()
+
+    def start_calibration_capture(self) -> dict[str, Any]:
+        """Begin the 90-frame baseline capture."""
+        with self._lock:
+            self._calibration_step = 2
+            self._calibration_session.start_capture()
+        self._ensure_calibration_camera()
+        return self.state()
+
+    def recapture(self) -> dict[str, Any]:
+        """Return to calibration preview from the confirmation step."""
+        return self.start_calibration_preview()
+
+    def accept_calibration(self) -> dict[str, Any]:
+        """Persist the captured baseline and return to the dashboard."""
+        with self._lock:
+            result = self._calibration_result
+        if result is None:
+            return self.state()
+
+        profile = CalibrationProfile(
+            captured_at=result.captured_at,
+            baseline_means=result.baseline.means,
+            baseline_stds=result.baseline.std_devs,
+            sensitivity_multipliers={name: DEFAULT_SENSITIVITY_MULTIPLIER for name in ALL_MEASUREMENTS},
+        )
+        self._pm.save_profile(profile)
+        self.stop_calibration_camera()
+        with self._lock:
+            self._profile = profile
+            self._active_view = VIEW_DASHBOARD
+        logger.info("Calibration saved")
+        return self.state()
+
+    def cancel_calibration(self) -> dict[str, Any]:
+        """Cancel calibration and return to the dashboard."""
+        self.stop_calibration_camera()
+        with self._lock:
+            self._active_view = VIEW_DASHBOARD
+        return self.state()
+
+    def delete_calibration(self) -> dict[str, Any]:
+        """Delete stored calibration data."""
+        self._pm.delete_calibration()
+        self.stop_monitoring()
+        with self._lock:
+            self._profile = None
+            self._active_view = VIEW_CALIBRATION
+        return self.state()
+
+    def latest_monitor_jpeg(self) -> Optional[bytes]:
+        """Return the latest monitoring preview frame."""
+        with self._lock:
+            return self._current_monitor_jpeg
+
+    def latest_calibration_jpeg(self) -> Optional[bytes]:
+        """Return the latest calibration preview frame."""
+        with self._lock:
+            return self._current_calibration_jpeg
+
+    def latest_monitor_frame_data_url(self) -> Optional[str]:
+        """Return the latest monitoring preview as a browser-ready data URL."""
+        return self._data_url(self.latest_monitor_jpeg())
+
+    def latest_calibration_frame_data_url(self) -> Optional[str]:
+        """Return the latest calibration preview as a browser-ready data URL."""
+        return self._data_url(self.latest_calibration_jpeg())
+
+    def shutdown(self) -> None:
+        """Release all background resources."""
+        self.stop_monitoring()
+        self.stop_calibration_camera()
+        self._voice_manager.shutdown()
+
+    def _monitor_loop(self) -> None:
+        detector: Optional[PoseDetector] = None
+        try:
+            self._monitor_cap = self._open_camera(self._settings.camera_index)
+            detector = PoseDetector()
+            while not self._monitor_stop.is_set():
+                if self._monitor_cap is None or not self._monitor_cap.isOpened():
+                    break
+                ret, frame = self._monitor_cap.read()
+                if not ret:
+                    time.sleep(0.033)
+                    continue
+                self._process_monitor_frame(detector, cv2.flip(frame, 1))
+                time.sleep(0.033)
+        except Exception:
+            logger.exception("Monitoring loop error")
+        finally:
+            if detector is not None:
+                detector.close()
+            if self._monitor_cap is not None:
+                self._monitor_cap.release()
+                self._monitor_cap = None
+            with self._lock:
+                self._monitoring = False
+
+    def _process_monitor_frame(self, detector: PoseDetector, frame: np.ndarray) -> None:
+        landmarks = detector.detect(frame)
+        if landmarks is not None:
+            frame = detector.draw_landmarks(frame, landmarks)
+            measurements = self._analyzer.compute_measurements(landmarks)
+            status = self._evaluate_posture(measurements)
+            self._process_alerts(status)
+        else:
+            with self._lock:
+                self._current_status = STATUS_NO_DETECTION
+
+        jpeg = self._encode_jpeg(frame, CAMERA_THUMBNAIL_WIDTH, CAMERA_THUMBNAIL_HEIGHT)
+        with self._lock:
+            self._current_monitor_jpeg = jpeg
+
+    def _evaluate_posture(self, measurements: Any) -> PostureStatus:
+        with self._lock:
+            profile = self._profile
+        if profile is None:
+            with self._lock:
+                self._current_status = STATUS_NO_DETECTION
+            return PostureStatus(STATUS_GOOD, [], None)
+
+        status = self._analyzer.compare_to_baseline(
+            measurements,
+            profile.baseline_means,
+            profile.baseline_stds,
+            profile.sensitivity_multipliers,
+        )
+        with self._lock:
+            self._current_status = status.overall_status
+        return status
+
+    def _process_alerts(self, status: PostureStatus) -> None:
+        alert = self._alert_engine.check(status)
+        with self._lock:
+            if alert is not None:
+                self._voice_manager.speak_alert(alert)
+                self._alert_count += 1
+
+            if status.overall_status == STATUS_GOOD:
+                streak = time.time() - self._good_streak_start
+                self._longest_good_streak = max(self._longest_good_streak, streak)
+            else:
+                self._good_streak_start = time.time()
+
+    def _ensure_calibration_camera(self) -> None:
+        if self._calibration_running:
+            return
+        self._calibration_stop.clear()
+        self._calibration_thread = threading.Thread(
+            target=self._calibration_loop,
+            name="Calibration-Thread",
+            daemon=True,
+        )
+        self._calibration_thread.start()
+
+    def _calibration_loop(self) -> None:
+        try:
+            self._calibration_cap = self._open_camera(self._settings.camera_index)
+            self._calibration_detector = PoseDetector()
+            self._calibration_running = True
+            while not self._calibration_stop.is_set():
+                if self._calibration_cap is None or not self._calibration_cap.isOpened():
+                    break
+                ret, frame = self._calibration_cap.read()
+                if not ret:
+                    time.sleep(0.033)
+                    continue
+                self._process_calibration_frame(cv2.flip(frame, 1))
+                time.sleep(0.033)
+        except Exception:
+            logger.exception("Calibration loop error")
+        finally:
+            self._release_calibration_resources()
+
+    def _process_calibration_frame(self, frame: np.ndarray) -> None:
+        detector = self._calibration_detector
+        if detector is None:
+            return
+        landmarks = detector.detect(frame)
+        if landmarks is not None:
+            frame = detector.draw_landmarks(frame, landmarks)
+            measurements = PostureAnalyzer.compute_measurements(landmarks)
+            self._calibration_session.add_frame(measurements)
+            with self._lock:
+                self._calibration_measurements = measurements.to_dict()
+                self._calibration_stability = self._calibration_session.get_stability_score()
+
+            if (
+                self._calibration_session.is_capturing
+                and self._calibration_session.capture_complete
+            ):
+                result = self._calibration_session.finish_capture()
+                with self._lock:
+                    self._calibration_result = result
+                    self._calibration_step = 3 if result is not None else 1
+                self.stop_calibration_camera()
+
+        jpeg = self._encode_jpeg(frame, 420, 315)
+        with self._lock:
+            self._current_calibration_jpeg = jpeg
+
+    def stop_calibration_camera(self) -> None:
+        self._calibration_stop.set()
+        self._release_calibration_resources()
+
+    def _release_calibration_resources(self) -> None:
+        with self._lock:
+            self._calibration_running = False
+        if self._calibration_cap is not None:
+            self._calibration_cap.release()
+            self._calibration_cap = None
+        if self._calibration_detector is not None:
+            self._calibration_detector.close()
+            self._calibration_detector = None
+
+    def _settings_payload(self) -> dict[str, Any]:
+        return {
+            "coach_personality": self._settings.coach_personality,
+            "tts_voice": self._settings.tts_voice,
+            "alert_delay_sec": self._settings.alert_delay_sec,
+            "cooldown_sec": self._settings.cooldown_sec,
+            "camera_index": self._settings.camera_index,
+            "dark_mode": self._settings.dark_mode,
+            "launch_at_startup": self._settings.launch_at_startup,
+            "show_camera_preview": self._settings.show_camera_preview,
+            "hotkey": self._settings.hotkey,
+            "volume": self._settings.volume,
+        }
+
+    def _profile_payload(self) -> Optional[dict[str, Any]]:
+        if self._profile is None:
+            return None
+        return {
+            "captured_at": self._profile.captured_at,
+            "baseline_means": self._profile.baseline_means,
+            "baseline_stds": self._profile.baseline_stds,
+            "sensitivity_multipliers": self._profile.sensitivity_multipliers,
+        }
+
+    def _calibration_payload(self) -> dict[str, Any]:
+        result = self._calibration_result
+        quality = None
+        if result is not None:
+            quality = {
+                "isAcceptable": result.quality.is_acceptable,
+                "warnings": result.quality.warnings,
+                "perMeasurement": {
+                    name: {"mean": mean, "std": std, "ok": ok}
+                    for name, (mean, std, ok) in result.quality.per_measurement.items()
+                },
+            }
+        return {
+            "step": self._calibration_step,
+            "running": self._calibration_running,
+            "stability": self._calibration_stability,
+            "measurements": self._calibration_measurements,
+            "captureProgress": self._calibration_session.capture_progress,
+            "captureComplete": self._calibration_session.capture_complete,
+            "quality": quality,
+        }
+
+    def _header_status(self) -> dict[str, str]:
+        if self._alert_engine.is_snoozed:
+            return {"text": "Snoozed", "color": COLOR_WARNING}
+        if self._alert_engine.is_paused:
+            return {"text": "Paused", "color": COLOR_WARNING}
+        if self._monitoring:
+            return {"text": "Active", "color": COLOR_GOOD}
+        return {"text": "Inactive", "color": COLOR_INACTIVE}
+
+    @staticmethod
+    def _posture_detail(status: str) -> str:
+        return {
+            STATUS_GOOD: "Your posture looks great. Keep it up.",
+            STATUS_WARNING: "Minor deviation detected. Adjust slightly.",
+            STATUS_BAD: "Bad posture detected. Correct your position.",
+            STATUS_NO_DETECTION: "No pose detected. Check camera.",
+        }.get(status, "")
+
+    @staticmethod
+    def _format_duration(seconds: float) -> str:
+        total = int(seconds)
+        hours = total // 3600
+        minutes = (total % 3600) // 60
+        secs = total % 60
+        if hours > 0:
+            return f"{hours}:{minutes:02d}:{secs:02d}"
+        return f"{minutes}:{secs:02d}"
+
+    @staticmethod
+    def _encode_jpeg(frame: np.ndarray, width: int, height: int) -> Optional[bytes]:
+        try:
+            h, w = frame.shape[:2]
+            ratio = min(width / w, height / h)
+            new_w = max(1, int(w * ratio))
+            new_h = max(1, int(h * ratio))
+            resized = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+            ok, buffer = cv2.imencode(".jpg", resized, [int(cv2.IMWRITE_JPEG_QUALITY), 82])
+            return buffer.tobytes() if ok else None
+        except Exception:
+            logger.debug("Failed to encode preview frame", exc_info=True)
+            return None
+
+    @staticmethod
+    def _open_camera(index: int) -> cv2.VideoCapture:
+        if sys.platform == "win32":
+            return cv2.VideoCapture(index, cv2.CAP_DSHOW)
+        return cv2.VideoCapture(index)
+
+    @staticmethod
+    def _data_url(jpeg: Optional[bytes]) -> Optional[str]:
+        if jpeg is None:
+            return None
+        encoded = base64.b64encode(jpeg).decode("ascii")
+        return f"data:image/jpeg;base64,{encoded}"

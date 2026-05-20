@@ -13,12 +13,14 @@ macos_icon = build_icon_dir / "proposture.icns"
 
 datas = [
     (str(project_dir / "assets"), "assets"),
+    (str(project_dir / "frontend" / "dist"), "frontend/dist"),
 ]
-datas += collect_data_files("customtkinter")
 datas += collect_data_files("mediapipe")
+datas += collect_data_files("webview")
 
 hiddenimports = []
 hiddenimports += collect_submodules("mediapipe")
+hiddenimports += collect_submodules("webview")
 
 a = Analysis(
     [str(project_dir / "main.py")],

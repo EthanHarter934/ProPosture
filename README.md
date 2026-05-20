@@ -1,6 +1,6 @@
 # ProPosture
 
-**Real-time posture monitoring for your desk setup.** ProPosture uses your webcam and MediaPipe Pose to analyze your sitting posture, compares it against your personal calibrated baseline, and coaches you with spoken alerts when you start slouching.
+**Real-time posture monitoring for your desk setup.** ProPosture uses your webcam and MediaPipe Pose to analyze your sitting posture, compares it against your personal calibrated baseline, and coaches you with spoken alerts when you start slouching. The standalone desktop UI is a React + Tailwind frontend loaded from bundled files in a native WebView shell, with direct JavaScript-to-Python calls through the desktop bridge.
 
 ## Features
 
@@ -28,18 +28,8 @@ venv\Scripts\activate
 source venv/bin/activate
 
 pip install -r requirements.txt
-```
-
-On macOS, the Python used for the virtual environment must include Tkinter.
-If `python -c "import tkinter"` fails, install a Tk-enabled Python and recreate
-the virtual environment. For Homebrew Python 3.12, that usually means:
-
-```bash
-brew install python-tk@3.12
-rm -rf venv
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+npm install
+npm run build
 ```
 
 ### 2. Run
@@ -48,7 +38,7 @@ pip install -r requirements.txt
 python main.py
 ```
 
-On first launch, the **Calibration Wizard** will guide you through setting your personal posture baseline.
+The Python backend opens the bundled React UI inside the ProPosture desktop window. On first launch, the **Calibration Wizard** will guide you through setting your personal posture baseline.
 
 ### 3. Use
 
@@ -91,10 +81,18 @@ On first launch, the **Calibration Wizard** will guide you through setting your 
 proposture/
 ├── main.py                    # Entry point
 ├── constants.py               # All configurable values
+├── package.json               # React/Tailwind frontend dependencies
+├── vite.config.js             # Vite dev/build configuration
 ├── requirements.txt           # Dependencies
 ├── requirements-build.txt     # Build dependencies
 ├── build.py                   # Cross-platform PyInstaller build wrapper
 ├── ProPosture.spec            # PyInstaller app/exe spec
+├── src/                       # React frontend source
+├── frontend/
+│   └── dist/                  # Built frontend loaded by WebView
+├── backend/
+│   ├── controller.py          # React-facing app controller
+│   └── desktop_api.py         # pywebview JavaScript bridge
 ├── assets/
 │   └── icon.png               # App icon
 ├── core/
@@ -106,9 +104,6 @@ proposture/
 ├── audio/
 │   └── voice_manager.py       # TTS with coach personalities
 ├── ui/
-│   ├── main_window.py         # Dashboard
-│   ├── calibration_screen.py  # 4-step calibration wizard
-│   ├── settings_window.py     # Settings controls
 │   └── tray_icon.py           # System tray integration
 └── data/
     └── profile_manager.py     # JSON profile persistence
@@ -134,14 +129,13 @@ python -m pip install -r requirements-build.txt
 python build.py
 ```
 
-PyInstaller builds for the OS it is running on. Run `python build.py` on
-Windows to create `dist/ProPosture.exe`, and run it on macOS to create
-`dist/ProPosture.app`.
+`build.py` runs the React production build first, then PyInstaller. PyInstaller builds for the OS it is running on. Run `python build.py` on Windows to create `dist/ProPosture.exe`, and run it on macOS to create `dist/ProPosture.app`.
 
 ## Requirements
 
 - Python 3.11+
 - Windows 10/11 or macOS
+- Microsoft Edge WebView2 Runtime on Windows
 - Webcam
 - Speakers or headphones (for voice alerts)
 

@@ -1,44 +1,45 @@
 """
-ProPosture — Main Entry Point
+ProPosture entry point.
 
-Launches the ProPosture application: configures logging, loads user profile
-and settings, sets up the system tray icon, registers the global hotkey,
-and starts the main window. Handles graceful shutdown on exit.
+Starts the Python posture backend, loads the React frontend in a native WebView,
+configures the system tray, registers the global hotkey, and handles shutdown.
 """
+
+from __future__ import annotations
 
 import logging
 import os
+import signal
 import sys
 from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any, Optional
 
 # Suppress MediaPipe C++ warnings (like the NORM_RECT warning) before imports
 os.environ["GLOG_minloglevel"] = "2"
 
-import customtkinter as ctk
-
+import webview
+from backend.controller import AppController
+from backend.desktop_api import DesktopApi
 from constants import (
     APP_DATA_DIR,
-    APP_NAME,
     DEFAULT_HOTKEY,
     LOG_DIR,
     LOG_RETENTION_DAYS,
 )
 from data.profile_manager import ProfileManager
-from ui.main_window import MainWindow
 from ui.tray_icon import TrayIcon
 
 
+ROOT = Path(__file__).resolve().parent
+RESOURCE_ROOT = Path(getattr(sys, "_MEIPASS", ROOT))
+FRONTEND_INDEX = RESOURCE_ROOT / "frontend" / "dist" / "index.html"
+
+
 def setup_logging() -> None:
-    """
-    Configure application logging to both file and console.
-
-    Log files are written to the platform-specific ProPosture logs directory
-    with daily rotation. Old logs beyond LOG_RETENTION_DAYS are cleaned up.
-    """
+    """Configure application logging to both file and console."""
     LOG_DIR.mkdir(parents=True, exist_ok=True)
-
-    log_filename = f"proposture_{datetime.now().strftime('%Y-%m-%d')}.log"
-    log_path = LOG_DIR / log_filename
+    log_path = LOG_DIR / f"proposture_{datetime.now().strftime('%Y-%m-%d')}.log"
 
     formatter = logging.Formatter(
         "[%(asctime)s] %(levelname)-8s %(name)-25s %(message)s",
@@ -55,6 +56,7 @@ def setup_logging() -> None:
 
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.DEBUG)
+    root_logger.handlers.clear()
     root_logger.addHandler(file_handler)
     root_logger.addHandler(console_handler)
 
@@ -74,21 +76,11 @@ def cleanup_old_logs() -> None:
 
 
 def register_global_hotkey(
-    main_window: MainWindow,
+    controller: AppController,
     tray: TrayIcon,
     hotkey: str = DEFAULT_HOTKEY,
 ) -> None:
-    """
-    Register the global hotkey for toggling pause/resume.
-
-    Uses the `keyboard` library. Falls back gracefully if registration
-    fails (e.g., due to insufficient privileges).
-
-    Args:
-        main_window: Main window instance for the toggle callback.
-        tray: Tray icon to update pause state.
-        hotkey: Keyboard shortcut string.
-    """
+    """Register the global pause/resume hotkey where supported."""
     if sys.platform == "darwin":
         logging.info("Global hotkey disabled on macOS")
         return
@@ -97,76 +89,95 @@ def register_global_hotkey(
         import keyboard
 
         def on_hotkey() -> None:
-            """Handle global hotkey press."""
-            main_window.after(0, main_window.toggle_pause)
-            is_paused = main_window._alert_engine.is_paused
-            tray.set_paused(is_paused)
+            state = controller.toggle_pause()
+            tray.set_paused(bool(state["paused"]))
 
         keyboard.add_hotkey(hotkey, on_hotkey)
         logging.info("Global hotkey registered: %s", hotkey)
     except ImportError:
-        logging.warning("keyboard library not available — global hotkey disabled")
+        logging.warning("keyboard library not available; global hotkey disabled")
     except Exception:
-        logging.exception("Failed to register global hotkey — may need admin privileges")
+        logging.exception("Failed to register global hotkey; may need admin privileges")
 
 
-def main() -> None:
-    """
-    Application entry point.
-
-    Sets up logging, loads user data, creates the UI, registers the tray
-    icon and hotkey, then runs the main event loop.
-    """
+def main() -> int:
+    """Start the desktop app and block until the WebView exits."""
     setup_logging()
     logger = logging.getLogger(__name__)
     logger.info("ProPosture starting up")
 
-    # Ensure app data directory
     APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    profile_manager = ProfileManager()
+    settings = profile_manager.load_settings()
+    profile = profile_manager.load_profile()
+    controller = AppController(profile_manager, settings, profile)
 
-    # Load profile and settings
-    pm = ProfileManager()
-    settings = pm.load_settings()
-    profile = pm.load_profile()
+    if not FRONTEND_INDEX.exists():
+        raise FileNotFoundError(
+            f"React frontend build not found at {FRONTEND_INDEX}. "
+            "Run npm install and npm run build."
+        )
 
-    # Set appearance mode
-    ctk.set_appearance_mode("dark" if settings.dark_mode else "light")
-    ctk.set_default_color_theme("blue")
+    desktop_api = DesktopApi(controller)
+    app_window: Optional[Any] = None
+    shutting_down = False
 
-    # Create main window
-    app = MainWindow(
-        profile_manager=pm,
-        settings=settings,
-        profile=profile,
-    )
+    def show_window() -> None:
+        if app_window is None:
+            return
+        try:
+            app_window.show()
+            if hasattr(app_window, "restore"):
+                app_window.restore()
+        except Exception:
+            logger.debug("Failed to show WebView window", exc_info=True)
 
-    # Set up tray icon
+    def shutdown() -> None:
+        nonlocal shutting_down
+        if shutting_down:
+            return
+        shutting_down = True
+        logger.info("Application shutting down")
+        controller.shutdown()
+        if app_window is not None:
+            try:
+                app_window.destroy()
+            except Exception:
+                logger.debug("Failed to destroy WebView window", exc_info=True)
+
     tray = TrayIcon(
-        on_open=lambda: app.after(0, app.show_window),
-        on_pause=lambda: app.after(0, app.snooze),
-        on_resume=lambda: app.after(0, app.toggle_pause),
-        on_recalibrate=lambda: app.after(0, app.open_calibration),
-        on_quit=lambda: app.after(0, app.quit_app),
+        on_open=show_window,
+        on_pause=lambda: controller.snooze(),
+        on_resume=lambda: controller.resume_alerts(),
+        on_recalibrate=lambda: (controller.begin_calibration(), show_window()),
+        on_quit=shutdown,
     )
     tray.start()
-    app.tray_icon = tray
+    register_global_hotkey(controller, tray, settings.hotkey or DEFAULT_HOTKEY)
 
-    # Register global hotkey
-    register_global_hotkey(app, tray, settings.hotkey or DEFAULT_HOTKEY)
+    logger.info("ProPosture WebView loading %s", FRONTEND_INDEX)
 
-    # Minimize to tray on window close (not quit)
-    app.protocol("WM_DELETE_WINDOW", app.on_closing)
+    def handle_signal(signum: int, frame: object) -> None:
+        shutdown()
 
-    # If no calibration exists, open calibration wizard on first launch
-    if not pm.has_calibration():
-        logger.info("No calibration found — launching calibration wizard")
-        app.after(500, app.open_calibration)
+    signal.signal(signal.SIGINT, handle_signal)
+    signal.signal(signal.SIGTERM, handle_signal)
 
-    logger.info("ProPosture ready — entering main loop")
-    app.mainloop()
+    app_window = webview.create_window(
+        "ProPosture",
+        FRONTEND_INDEX.as_uri(),
+        js_api=desktop_api,
+        width=1024,
+        height=760,
+        min_size=(780, 640),
+    )
 
+    webview.start(debug=False)
+    shutdown()
+    tray.stop()
     logger.info("ProPosture shut down cleanly")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -9,6 +9,8 @@ Run this script on the target OS:
 from __future__ import annotations
 
 import platform
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -28,25 +30,22 @@ def main() -> int:
             "release executables should be built on Windows or macOS."
         )
 
-    _check_tkinter_available()
+    _build_frontend()
     _prepare_platform_icon()
     _run_pyinstaller()
     _print_output_hint()
     return 0
 
 
-def _check_tkinter_available() -> None:
-    """Fail early if the active Python cannot bundle the Tk UI runtime."""
-    try:
-        import tkinter  # noqa: F401
-    except ImportError as exc:
-        raise SystemExit(
-            "This Python does not include Tkinter, which ProPosture needs for "
-            "its CustomTkinter UI. Install a Tk-enabled Python, then recreate "
-            "the virtualenv and rerun this build. On Homebrew macOS Python, "
-            "install the matching python-tk package, for example: "
-            "brew install python-tk@3.12"
-        ) from exc
+def _build_frontend() -> None:
+    """Build the React/Tailwind frontend loaded by the WebView shell."""
+    npm = shutil.which("npm")
+    if npm is None:
+        raise SystemExit("npm is required to build the React frontend.")
+
+    if not (ROOT / "node_modules").exists():
+        subprocess.run([npm, "install"], cwd=ROOT, check=True)
+    subprocess.run([npm, "run", "build"], cwd=ROOT, check=True)
 
 
 def _prepare_platform_icon() -> None:
