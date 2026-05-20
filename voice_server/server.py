@@ -51,6 +51,21 @@ def _cache_key(voice_description: str, text: str) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def _set_seed(voice_description: str):
+    """Set the PyTorch random seed deterministically based on the voice description."""
+    import torch
+    import random
+    
+    # Hash the voice description to a stable 32-bit integer
+    h = hashlib.sha256(voice_description.encode("utf-8")).hexdigest()
+    seed = int(h[:8], 16) % (2**32 - 1)
+    
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    random.seed(seed)
+    logger.debug("Set generation seed deterministically to %d for voice: %s", seed, voice_description[:30])
+
+
 def _generate_wav(voice_description: str, text: str) -> bytes:
     """
     Generate a WAV audio file for the given text with the voice description.
@@ -69,6 +84,8 @@ def _generate_wav(voice_description: str, text: str) -> bytes:
     # Format text with voice description in parentheses as VoxCPM2 expects
     if voice_description.strip():
         full_text = f"({voice_description}){text}"
+        # Set seed deterministically based on voice description to ensure identical timbre/personality
+        _set_seed(voice_description)
     else:
         full_text = text
 
