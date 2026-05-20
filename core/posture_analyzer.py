@@ -9,17 +9,14 @@ I/O — only geometry calculations.
 from __future__ import annotations
 
 import logging
-import math
 from dataclasses import dataclass
 from typing import Optional, TYPE_CHECKING
 
 from constants import (
     ALL_MEASUREMENTS,
     DEFAULT_SENSITIVITY_MULTIPLIER,
-    MEASURE_FORWARD_HEAD_RATIO,
-    MEASURE_HEAD_TILT_ANGLE,
-    MEASURE_NECK_ANGLE,
-    MEASURE_SHOULDER_ANGLE,
+    MEASURE_NOSE_SHOULDER_VERTICAL_GAP,
+    MEASURE_SHOULDER_SCREEN_Y,
     POSTURE_TOLERANCE_FLOORS,
     STATUS_BAD,
     STATUS_GOOD,
@@ -36,27 +33,24 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class PostureMeasurements:
     """
-    The four computed posture measurements from a single frame.
+    The computed posture measurements from a single frame.
 
     Attributes:
-        shoulder_angle: Angle of shoulder line vs horizontal (degrees).
-        forward_head_ratio: Horizontal nose offset / shoulder width (unitless).
-        head_tilt_angle: Angle of ear line vs horizontal (degrees).
-        neck_angle: Angle at nose in shoulder-nose triangle (degrees).
+        nose_shoulder_vertical_gap: Vertical distance from the nose to the
+            shoulder line in normalized screen coordinates. Larger means the
+            nose is higher above the shoulders.
+        shoulder_screen_y: Shoulder midpoint y in normalized screen
+            coordinates. Larger means lower on screen.
     """
 
-    shoulder_angle: float
-    forward_head_ratio: float
-    head_tilt_angle: float
-    neck_angle: float
+    nose_shoulder_vertical_gap: float
+    shoulder_screen_y: float
 
     def to_dict(self) -> dict[str, float]:
         """Convert measurements to a dictionary keyed by measurement names."""
         return {
-            MEASURE_SHOULDER_ANGLE: self.shoulder_angle,
-            MEASURE_FORWARD_HEAD_RATIO: self.forward_head_ratio,
-            MEASURE_HEAD_TILT_ANGLE: self.head_tilt_angle,
-            MEASURE_NECK_ANGLE: self.neck_angle,
+            MEASURE_NOSE_SHOULDER_VERTICAL_GAP: self.nose_shoulder_vertical_gap,
+            MEASURE_SHOULDER_SCREEN_Y: self.shoulder_screen_y,
         }
 
 
@@ -114,32 +108,24 @@ class PostureAnalyzer:
     @staticmethod
     def compute_measurements(landmarks: DetectedLandmarks) -> PostureMeasurements:
         """
-        Compute all four posture measurements from detected landmarks.
+        Compute posture measurements from detected landmarks.
 
         Args:
             landmarks: The five detected landmark positions (normalized 0–1).
 
         Returns:
-            PostureMeasurements containing all four values.
+            PostureMeasurements containing the vertical posture values.
         """
-        shoulder_angle = PostureAnalyzer._compute_shoulder_angle(
+        nose_shoulder_vertical_gap = PostureAnalyzer._compute_nose_shoulder_vertical_gap(
+            landmarks.nose, landmarks.left_shoulder, landmarks.right_shoulder
+        )
+        shoulder_screen_y = PostureAnalyzer._compute_shoulder_screen_y(
             landmarks.left_shoulder, landmarks.right_shoulder
-        )
-        forward_head_ratio = PostureAnalyzer._compute_forward_head_ratio(
-            landmarks.nose, landmarks.left_shoulder, landmarks.right_shoulder
-        )
-        head_tilt_angle = PostureAnalyzer._compute_head_tilt_angle(
-            landmarks.left_ear, landmarks.right_ear
-        )
-        neck_angle = PostureAnalyzer._compute_neck_angle(
-            landmarks.nose, landmarks.left_shoulder, landmarks.right_shoulder
         )
 
         return PostureMeasurements(
-            shoulder_angle=shoulder_angle,
-            forward_head_ratio=forward_head_ratio,
-            head_tilt_angle=head_tilt_angle,
-            neck_angle=neck_angle,
+            nose_shoulder_vertical_gap=nose_shoulder_vertical_gap,
+            shoulder_screen_y=shoulder_screen_y,
         )
 
     @staticmethod
@@ -166,8 +152,12 @@ class PostureAnalyzer:
 
         for name in ALL_MEASUREMENTS:
             deviation = PostureAnalyzer._compute_deviation(
-                name, current_dict[name], baseline[name],
-                std_devs[name], multipliers[name],
+                name,
+                current_dict[name],
+                baseline[name],
+                std_devs[name],
+                multipliers[name],
+                baseline,
             )
             deviations.append(deviation)
 
@@ -176,7 +166,7 @@ class PostureAnalyzer:
     @staticmethod
     def _compute_deviation(
         name: str, current: float, mean: float,
-        std: float, multiplier: float,
+        std: float, multiplier: float, baseline: dict[str, float],
     ) -> MeasurementDeviation:
         """
         Compute how far a single measurement deviates from its baseline.
@@ -191,7 +181,7 @@ class PostureAnalyzer:
         Returns:
             MeasurementDeviation with computed deviation ratio.
         """
-        tolerance = PostureAnalyzer._compute_tolerance(name, std, multiplier)
+        tolerance = PostureAnalyzer._compute_tolerance(name, std, multiplier, baseline)
         raw_delta = current - mean
         relevant_delta = PostureAnalyzer._compute_relevant_delta(name, raw_delta)
         ratio = relevant_delta / tolerance
@@ -209,14 +199,19 @@ class PostureAnalyzer:
         )
 
     @staticmethod
-    def _compute_tolerance(name: str, std: float, multiplier: float) -> float:
+    def _compute_tolerance(
+        name: str,
+        std: float,
+        multiplier: float,
+        baseline: dict[str, float],
+    ) -> float:
         """
         Compute the effective deviation tolerance for a measurement.
 
-        The old classifier used only `std * multiplier`. During a steady
-        calibration that value can be tiny, so normal MediaPipe jitter becomes
-        "bad posture". The new classifier keeps the user's sensitivity control
-        but floors each measurement at a practical minimum tolerance.
+        Tolerance floors are percentages of the calibrated vertical distance
+        between the nose and the shoulder line. This keeps classification
+        person- and camera-relative while still preserving the user's
+        sensitivity control.
 
         Args:
             name: Measurement name.
@@ -227,7 +222,15 @@ class PostureAnalyzer:
             Effective tolerance in the measurement's native units.
         """
         sensitivity_scale = multiplier / DEFAULT_SENSITIVITY_MULTIPLIER
-        floor = POSTURE_TOLERANCE_FLOORS.get(name, 1.0) * sensitivity_scale
+        reference_distance = max(
+            abs(baseline.get(MEASURE_NOSE_SHOULDER_VERTICAL_GAP, 0.0)),
+            1e-6,
+        )
+        floor = (
+            POSTURE_TOLERANCE_FLOORS.get(name, 0.1)
+            * reference_distance
+            * sensitivity_scale
+        )
         std_based = max(0.0, std) * multiplier
         return max(floor, std_based, 1e-6)
 
@@ -236,10 +239,10 @@ class PostureAnalyzer:
         """
         Return only the part of a measurement change that indicates worse posture.
 
-        Shoulder and head tilt can be bad in either direction, so their
-        absolute delta is used. Forward-head ratio and neck angle are normalized
-        posture-risk measurements where lower-than-baseline is not the common
-        failure mode, so only increases count toward bad posture.
+        The head is bad when the calibrated nose-to-shoulder vertical gap
+        shrinks, which means the nose dropped toward the shoulder line.
+        Shoulders are bad when their screen y increases, which means they are
+        lower than the calibrated position.
 
         Args:
             name: Measurement name.
@@ -248,7 +251,9 @@ class PostureAnalyzer:
         Returns:
             Non-negative deviation to compare against tolerance.
         """
-        if name in (MEASURE_FORWARD_HEAD_RATIO, MEASURE_NECK_ANGLE):
+        if name == MEASURE_NOSE_SHOULDER_VERTICAL_GAP:
+            return max(0.0, -raw_delta)
+        if name == MEASURE_SHOULDER_SCREEN_Y:
             return max(0.0, raw_delta)
         return abs(raw_delta)
 
@@ -285,34 +290,11 @@ class PostureAnalyzer:
         )
 
     @staticmethod
-    def _compute_shoulder_angle(
-        left: LandmarkPoint, right: LandmarkPoint
-    ) -> float:
-        """
-        Compute the angle of the shoulder line relative to horizontal.
-
-        A perfectly level pair of shoulders yields 0 degrees.
-
-        Args:
-            left: Left shoulder landmark.
-            right: Right shoulder landmark.
-
-        Returns:
-            Angle in degrees (positive = left shoulder higher).
-        """
-        dx = right.x - left.x
-        dy = right.y - left.y
-        return math.degrees(math.atan2(dy, dx))
-
-    @staticmethod
-    def _compute_forward_head_ratio(
+    def _compute_nose_shoulder_vertical_gap(
         nose: LandmarkPoint, left_s: LandmarkPoint, right_s: LandmarkPoint
     ) -> float:
         """
-        Compute the forward head ratio (scale-independent).
-
-        Measures how far the nose is horizontally offset from the midpoint
-        of both shoulders, normalized by shoulder width.
+        Compute vertical distance from the nose to the shoulder line.
 
         Args:
             nose: Nose landmark.
@@ -320,77 +302,23 @@ class PostureAnalyzer:
             right_s: Right shoulder landmark.
 
         Returns:
-            Ratio (unitless). Higher = head further forward / to one side.
+            Normalized screen distance. Higher = nose higher above shoulders.
         """
-        mid_x = (left_s.x + right_s.x) / 2.0
-        shoulder_width = PostureAnalyzer._distance_2d(left_s, right_s)
-
-        if shoulder_width < 1e-6:
-            return 0.0
-
-        horizontal_offset = abs(nose.x - mid_x)
-        return horizontal_offset / shoulder_width
+        shoulder_y = PostureAnalyzer._compute_shoulder_screen_y(left_s, right_s)
+        return shoulder_y - nose.y
 
     @staticmethod
-    def _compute_head_tilt_angle(
-        left_ear: LandmarkPoint, right_ear: LandmarkPoint
+    def _compute_shoulder_screen_y(
+        left_s: LandmarkPoint, right_s: LandmarkPoint
     ) -> float:
         """
-        Compute the head tilt angle from the ear line vs horizontal.
+        Compute the average shoulder height in normalized screen coordinates.
 
         Args:
-            left_ear: Left ear landmark.
-            right_ear: Right ear landmark.
-
-        Returns:
-            Angle in degrees (positive = left ear higher).
-        """
-        dx = right_ear.x - left_ear.x
-        dy = right_ear.y - left_ear.y
-        return math.degrees(math.atan2(dy, dx))
-
-    @staticmethod
-    def _compute_neck_angle(
-        nose: LandmarkPoint, left_s: LandmarkPoint, right_s: LandmarkPoint
-    ) -> float:
-        """
-        Compute the neck angle: angle at the nose in the triangle
-        formed by left_shoulder, nose, right_shoulder.
-
-        A wider angle indicates the head is closer to the shoulder line
-        (more forward flexion).
-
-        Args:
-            nose: Nose landmark.
             left_s: Left shoulder landmark.
             right_s: Right shoulder landmark.
 
         Returns:
-            Angle in degrees at the nose vertex.
+            Normalized screen y. Higher value = lower on screen.
         """
-        vec_to_left = (left_s.x - nose.x, left_s.y - nose.y)
-        vec_to_right = (right_s.x - nose.x, right_s.y - nose.y)
-
-        dot = vec_to_left[0] * vec_to_right[0] + vec_to_left[1] * vec_to_right[1]
-        mag_left = math.sqrt(vec_to_left[0] ** 2 + vec_to_left[1] ** 2)
-        mag_right = math.sqrt(vec_to_right[0] ** 2 + vec_to_right[1] ** 2)
-
-        if mag_left < 1e-6 or mag_right < 1e-6:
-            return 0.0
-
-        cos_angle = max(-1.0, min(1.0, dot / (mag_left * mag_right)))
-        return math.degrees(math.acos(cos_angle))
-
-    @staticmethod
-    def _distance_2d(p1: LandmarkPoint, p2: LandmarkPoint) -> float:
-        """
-        Compute 2D Euclidean distance between two landmarks.
-
-        Args:
-            p1: First landmark point.
-            p2: Second landmark point.
-
-        Returns:
-            Distance in normalized coordinate space.
-        """
-        return math.sqrt((p2.x - p1.x) ** 2 + (p2.y - p1.y) ** 2)
+        return (left_s.y + right_s.y) / 2.0

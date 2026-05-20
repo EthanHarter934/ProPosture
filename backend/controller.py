@@ -38,6 +38,8 @@ from constants import (
     MAX_COOLDOWN_SEC,
     MAX_SENSITIVITY_MULTIPLIER,
     MEASUREMENT_DISPLAY_NAMES,
+    MEASURE_NOSE_SHOULDER_VERTICAL_GAP,
+    MEASURE_SHOULDER_SCREEN_Y,
     MIN_ALERT_DELAY_SEC,
     MIN_COOLDOWN_SEC,
     MIN_SENSITIVITY_MULTIPLIER,
@@ -98,6 +100,7 @@ class AppController:
         self._monitor_thread: Optional[threading.Thread] = None
         self._monitor_cap: Optional[cv2.VideoCapture] = None
         self._current_status = STATUS_NO_DETECTION
+        self._current_posture_reason = ""
         self._current_monitor_jpeg: Optional[bytes] = None
         self._session_start = 0.0
         self._alert_count = 0
@@ -130,7 +133,10 @@ class AppController:
                 "snoozed": self._alert_engine.is_snoozed,
                 "headerStatus": self._header_status(),
                 "postureStatus": self._current_status,
-                "postureDetail": self._posture_detail(self._current_status),
+                "postureDetail": self._posture_detail(
+                    self._current_status,
+                    self._current_posture_reason,
+                ),
                 "session": {
                     "elapsed": elapsed,
                     "elapsedLabel": self._format_duration(elapsed),
@@ -216,6 +222,7 @@ class AppController:
             self._alert_count = 0
             self._good_streak_start = time.time()
             self._longest_good_streak = 0.0
+            self._current_posture_reason = ""
 
         self._monitor_thread = threading.Thread(
             target=self._monitor_loop,
@@ -232,6 +239,7 @@ class AppController:
         with self._lock:
             self._monitoring = False
             self._current_status = STATUS_NO_DETECTION
+            self._current_posture_reason = ""
         if self._monitor_cap is not None:
             self._monitor_cap.release()
             self._monitor_cap = None
@@ -458,6 +466,7 @@ class AppController:
         else:
             with self._lock:
                 self._current_status = STATUS_NO_DETECTION
+                self._current_posture_reason = ""
 
         jpeg = self._encode_jpeg(frame, CAMERA_THUMBNAIL_WIDTH, CAMERA_THUMBNAIL_HEIGHT)
         with self._lock:
@@ -469,6 +478,7 @@ class AppController:
         if profile is None:
             with self._lock:
                 self._current_status = STATUS_NO_DETECTION
+                self._current_posture_reason = ""
             return PostureStatus(STATUS_GOOD, [], None)
 
         status = self._analyzer.compare_to_baseline(
@@ -479,6 +489,7 @@ class AppController:
         )
         with self._lock:
             self._current_status = status.overall_status
+            self._current_posture_reason = self._posture_reason(status)
         return status
 
     def _process_alerts(self, status: PostureStatus) -> None:
@@ -621,7 +632,18 @@ class AppController:
         return {"text": "Inactive", "color": COLOR_INACTIVE}
 
     @staticmethod
-    def _posture_detail(status: str) -> str:
+    def _posture_reason(status: PostureStatus) -> str:
+        if status.overall_status == STATUS_GOOD:
+            return ""
+        return {
+            MEASURE_NOSE_SHOULDER_VERTICAL_GAP: "Lift your head a bit higher.",
+            MEASURE_SHOULDER_SCREEN_Y: "Sit up straighter.",
+        }.get(status.worst_measurement or "", "")
+
+    @staticmethod
+    def _posture_detail(status: str, reason: str = "") -> str:
+        if reason:
+            return reason
         return {
             STATUS_GOOD: "Your posture looks great. Keep it up.",
             STATUS_WARNING: "Minor deviation detected. Adjust slightly.",

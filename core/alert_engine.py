@@ -16,8 +16,8 @@ from constants import (
     ALL_MEASUREMENTS,
     DEFAULT_ALERT_DELAY_SEC,
     DEFAULT_COOLDOWN_SEC,
-    MEASUREMENT_DISPLAY_NAMES,
-    STATUS_BAD,
+    MEASURE_NOSE_SHOULDER_VERTICAL_GAP,
+    MEASURE_SHOULDER_SCREEN_Y,
 )
 from core.posture_analyzer import PostureStatus
 
@@ -200,7 +200,6 @@ class AlertEngine:
         self._last_alert_time = now
         self._bad_start_times[worst_name] = None
 
-        display_name = MEASUREMENT_DISPLAY_NAMES.get(worst_name, worst_name)
         reason = self._build_reason(worst_name)
 
         alert = Alert(
@@ -224,10 +223,8 @@ class AlertEngine:
             A short description of the posture issue.
         """
         reasons = {
-            "shoulder_angle": "shoulders uneven",
-            "forward_head_ratio": "head too far forward",
-            "head_tilt_angle": "head tilting sideways",
-            "neck_angle": "neck flexion detected",
+            MEASURE_NOSE_SHOULDER_VERTICAL_GAP: "head dropped too low",
+            MEASURE_SHOULDER_SCREEN_Y: "shoulders lower than calibrated position",
         }
         return reasons.get(measurement_name, "poor posture detected")
 

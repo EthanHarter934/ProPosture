@@ -127,6 +127,13 @@ class ProfileManager:
         data = self._read_json(PROFILE_PATH)
         if data is None:
             return None
+        if data.get("calibration_version") != CALIBRATION_VERSION:
+            logger.info(
+                "Ignoring calibration profile with version %s; expected %s",
+                data.get("calibration_version"),
+                CALIBRATION_VERSION,
+            )
+            return None
 
         return self._parse_profile(data)
 

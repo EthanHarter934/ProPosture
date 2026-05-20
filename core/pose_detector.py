@@ -57,9 +57,9 @@ class PoseDetector:
     """
     Detects human pose landmarks in video frames using MediaPipe Pose.
 
-    Extracts only the five landmarks relevant to seated posture analysis:
-    nose, left/right ears, and left/right shoulders. Filters out frames
-    where any required landmark has insufficient visibility.
+    Extracts posture landmarks from the nose, ears, and shoulders. Only the
+    nose and shoulders are required for vertical posture scoring, so low ear
+    visibility does not reject an otherwise usable frame.
     """
 
     def __init__(self) -> None:
@@ -107,7 +107,7 @@ class PoseDetector:
         self, landmarks: list
     ) -> Optional[DetectedLandmarks]:
         """
-        Extract and validate the five required landmarks.
+        Extract and validate the required landmarks.
 
         Args:
             landmarks: Full list of MediaPipe pose landmarks.

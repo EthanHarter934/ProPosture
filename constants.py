@@ -72,8 +72,6 @@ LANDMARK_RIGHT_SHOULDER: int = 12
 
 REQUIRED_LANDMARKS: list[int] = [
     LANDMARK_NOSE,
-    LANDMARK_LEFT_EAR,
-    LANDMARK_RIGHT_EAR,
     LANDMARK_LEFT_SHOULDER,
     LANDMARK_RIGHT_SHOULDER,
 ]
@@ -101,7 +99,7 @@ FRAME_INTERVAL_MS: int = 1000 // TARGET_FPS  # ~33ms
 # CALIBRATION
 # ═══════════════════════════════════════════════
 
-CALIBRATION_VERSION: int = 2
+CALIBRATION_VERSION: int = 3
 CALIBRATION_CAPTURE_FRAMES: int = 90  # 3 seconds at 30 fps
 STABILITY_WINDOW_FRAMES: int = 30  # 1 second of frames for stability check
 STABILITY_THRESHOLD: float = 0.55  # 0.0–1.0 to consider user "stable"
@@ -171,41 +169,33 @@ TTS_VOICE_LABELS: dict[str, str] = {
 # MEASUREMENT NAMES (used as dict keys everywhere)
 # ═══════════════════════════════════════════════
 
-MEASURE_SHOULDER_ANGLE: str = "shoulder_angle"
-MEASURE_FORWARD_HEAD_RATIO: str = "forward_head_ratio"
-MEASURE_HEAD_TILT_ANGLE: str = "head_tilt_angle"
-MEASURE_NECK_ANGLE: str = "neck_angle"
+MEASURE_NOSE_SHOULDER_VERTICAL_GAP: str = "nose_shoulder_vertical_gap"
+MEASURE_SHOULDER_SCREEN_Y: str = "shoulder_screen_y"
 
 ALL_MEASUREMENTS: list[str] = [
-    MEASURE_SHOULDER_ANGLE,
-    MEASURE_FORWARD_HEAD_RATIO,
-    MEASURE_HEAD_TILT_ANGLE,
-    MEASURE_NECK_ANGLE,
+    MEASURE_NOSE_SHOULDER_VERTICAL_GAP,
+    MEASURE_SHOULDER_SCREEN_Y,
 ]
 
 MEASUREMENT_DISPLAY_NAMES: dict[str, str] = {
-    MEASURE_SHOULDER_ANGLE: "Shoulder Angle",
-    MEASURE_FORWARD_HEAD_RATIO: "Forward Head Ratio",
-    MEASURE_HEAD_TILT_ANGLE: "Head Tilt Angle",
-    MEASURE_NECK_ANGLE: "Neck Angle",
+    MEASURE_NOSE_SHOULDER_VERTICAL_GAP: "Nose-Shoulder Gap",
+    MEASURE_SHOULDER_SCREEN_Y: "Shoulder Height",
 }
 
 # Minimum tolerances for posture classification at the default sensitivity.
 # These prevent very stable calibrations from creating near-zero thresholds
 # that classify ordinary landmark jitter as bad posture.
+# Values are fractions of the calibrated nose-to-shoulder vertical distance.
 POSTURE_TOLERANCE_FLOORS: dict[str, float] = {
-    MEASURE_SHOULDER_ANGLE: 4.0,        # degrees
-    MEASURE_FORWARD_HEAD_RATIO: 0.12,   # ratio of shoulder width
-    MEASURE_HEAD_TILT_ANGLE: 4.0,       # degrees
-    MEASURE_NECK_ANGLE: 8.0,            # degrees
+    MEASURE_NOSE_SHOULDER_VERTICAL_GAP: 0.16,
+    MEASURE_SHOULDER_SCREEN_Y: 0.16,
 }
 
 # Maximum acceptable raw jitter during calibration capture.
+# Values are fractions of the calibrated nose-to-shoulder vertical distance.
 CALIBRATION_VARIANCE_LIMITS: dict[str, float] = {
-    MEASURE_SHOULDER_ANGLE: 3.0,        # degrees
-    MEASURE_FORWARD_HEAD_RATIO: 0.08,   # ratio of shoulder width
-    MEASURE_HEAD_TILT_ANGLE: 3.0,       # degrees
-    MEASURE_NECK_ANGLE: 6.0,            # degrees
+    MEASURE_NOSE_SHOULDER_VERTICAL_GAP: 0.08,
+    MEASURE_SHOULDER_SCREEN_Y: 0.08,
 }
 
 # ═══════════════════════════════════════════════
@@ -226,47 +216,27 @@ WARNING_THRESHOLD_RATIO: float = 0.7
 
 COACH_LINES: dict[str, dict[str, list[str]]] = {
     COACH_STANDARD: {
-        MEASURE_FORWARD_HEAD_RATIO: [
-            "Your head is drifting forward. Bring your ears back over your shoulders.",
-            "Try to imagine a string pulling the top of your head toward the ceiling.",
-            "Your neck will thank you — pull your chin back slightly and sit tall.",
+        MEASURE_NOSE_SHOULDER_VERTICAL_GAP: [
+            "Lift your head a bit higher.",
+            "Raise your head slightly and look straight ahead.",
+            "Bring your chin up a little and keep your head tall.",
         ],
-        MEASURE_SHOULDER_ANGLE: [
-            "Your shoulders are uneven. Take a breath and let them drop and level out.",
-            "Check your shoulders — try to make them symmetrical and relaxed.",
-            "Your shoulders seem lopsided. Roll them back and settle them evenly.",
-        ],
-        MEASURE_HEAD_TILT_ANGLE: [
-            "Your head is tilting to one side. Center it gently over your spine.",
-            "Try to level your head — imagine balancing a book on top of it.",
-            "Your head is leaning sideways. Straighten up and look ahead.",
-        ],
-        MEASURE_NECK_ANGLE: [
-            "Your neck is flexing forward. Lift your chin and lengthen your spine.",
-            "Bring your head back — your neck is bending too far forward.",
-            "Straighten your neck gently. Think tall, think aligned.",
+        MEASURE_SHOULDER_SCREEN_Y: [
+            "Sit up straighter.",
+            "Lift your chest and bring your shoulders back to your usual height.",
+            "Straighten your spine and return your shoulders to your calibrated position.",
         ],
     },
     COACH_DRILL_SERGEANT: {
-        MEASURE_FORWARD_HEAD_RATIO: [
-            "YOUR HEAD IS THREE FEET IN FRONT OF YOUR BODY. GET IT BACK. NOW.",
-            "What is that, a turkey neck?! Chin back, soldier! IMMEDIATELY.",
-            "Your monitor is not a feeding trough! SIT UP STRAIGHT!",
+        MEASURE_NOSE_SHOULDER_VERTICAL_GAP: [
+            "HEAD UP. EYES FORWARD. FIX IT.",
+            "Lift your head right now.",
+            "Chin up and posture tall.",
         ],
-        MEASURE_SHOULDER_ANGLE: [
-            "Are you a HUNCHBACK? Level those shoulders out RIGHT NOW!",
-            "One shoulder up, one shoulder down — you look like a broken coat hanger! FIX IT!",
-            "Those shoulders are a DISASTER! Square them up, recruit!",
-        ],
-        MEASURE_HEAD_TILT_ANGLE: [
-            "WHY IS YOUR HEAD SIDEWAYS? Are you a confused golden retriever? LEVEL IT OUT!",
-            "Your head is tilting like a sinking ship! STRAIGHTEN UP!",
-            "HEAD STRAIGHT, eyes forward! This is not a nap, soldier!",
-        ],
-        MEASURE_NECK_ANGLE: [
-            "Your neck looks like a GOOSENECK LAMP! Pull it back NOW!",
-            "NECK STRAIGHT, chin UP! You are NOT a vulture!",
-            "What are you looking at down there?! HEAD UP, SOLDIER!",
+        MEASURE_SHOULDER_SCREEN_Y: [
+            "SIT UP STRAIGHT. SHOULDERS UP.",
+            "Stop slouching and raise those shoulders.",
+            "Straighten your spine and get back to position.",
         ],
     },
 }

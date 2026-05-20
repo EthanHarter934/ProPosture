@@ -159,7 +159,7 @@ class VoiceManager:
         Select a random line for the given measurement, avoiding repeats.
 
         Args:
-            measurement_name: The measurement key (e.g. "shoulder_angle").
+            measurement_name: The measurement key.
 
         Returns:
             A coach line string, or None if no lines are defined.

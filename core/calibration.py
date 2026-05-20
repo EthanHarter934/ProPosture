@@ -20,6 +20,8 @@ from constants import (
     CALIBRATION_CAPTURE_FRAMES,
     CALIBRATION_VARIANCE_LIMITS,
     CALIBRATION_VERSION,
+    MEASURE_NOSE_SHOULDER_VERTICAL_GAP,
+    MEASURE_SHOULDER_SCREEN_Y,
     STABILITY_WINDOW_FRAMES,
 )
 from core.posture_analyzer import PostureMeasurements
@@ -165,17 +167,15 @@ class CalibrationSession:
         # Per-measurement "acceptable jitter" thresholds.
         # These are generous — even with natural body sway you should pass.
         jitter_thresholds = {
-            "shoulder_angle": 2.0,       # degrees
-            "forward_head_ratio": 0.05,  # ratio
-            "head_tilt_angle": 2.0,      # degrees
-            "neck_angle": 3.0,           # degrees
+            MEASURE_NOSE_SHOULDER_VERTICAL_GAP: 0.02,
+            MEASURE_SHOULDER_SCREEN_Y: 0.02,
         }
 
         scores: list[float] = []
         for name in ALL_MEASUREMENTS:
             values = np.array([f[name] for f in frames])
             std = float(np.std(values))
-            threshold = jitter_thresholds.get(name, 2.0)
+            threshold = jitter_thresholds.get(name, 0.02)
 
             # Score: 1.0 if std < threshold/2, linear drop to 0.0 at 2*threshold
             ratio = std / threshold
@@ -275,12 +275,16 @@ class CalibrationSession:
         """
         warnings: list[str] = []
         per_measurement: dict[str, tuple[float, float, bool]] = {}
+        reference_distance = max(
+            abs(baseline.means.get(MEASURE_NOSE_SHOULDER_VERTICAL_GAP, 0.0)),
+            1e-6,
+        )
 
         for name in ALL_MEASUREMENTS:
             mean = baseline.means[name]
             values = np.array([f[name] for f in frames])
             std = float(np.std(values))
-            limit = CALIBRATION_VARIANCE_LIMITS.get(name, 5.0)
+            limit = CALIBRATION_VARIANCE_LIMITS.get(name, 0.08) * reference_distance
             is_ok = std < limit
 
             if not is_ok:

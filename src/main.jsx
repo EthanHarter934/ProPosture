@@ -19,24 +19,30 @@ import {
 } from "lucide-react";
 import "./styles.css";
 
+const isDesktopApiReady = () => typeof window.pywebview?.api?.get_state === "function";
+
 const waitForDesktopApi = () => {
-  if (window.pywebview?.api) {
+  if (isDesktopApiReady()) {
     return Promise.resolve(window.pywebview.api);
   }
 
   return new Promise((resolve, reject) => {
-    const timeout = window.setTimeout(() => {
-      reject(new Error("Desktop bridge unavailable"));
-    }, 5000);
+    const startedAt = Date.now();
 
-    window.addEventListener(
-      "pywebviewready",
-      () => {
-        window.clearTimeout(timeout);
+    const check = () => {
+      if (isDesktopApiReady()) {
         resolve(window.pywebview.api);
-      },
-      { once: true }
-    );
+        return;
+      }
+      if (Date.now() - startedAt > 8000) {
+        reject(new Error("Desktop bridge unavailable"));
+        return;
+      }
+      window.setTimeout(check, 50);
+    };
+
+    window.addEventListener("pywebviewready", check, { once: true });
+    check();
   });
 };
 
@@ -251,8 +257,8 @@ function Calibration({ state, call, setView }) {
               <p className="label">Understanding Good Posture</p>
               <h2 className="mt-2 text-2xl font-bold tracking-normal">Set the baseline you want to maintain.</h2>
               <ul className="mt-4 space-y-2 text-sm text-zinc-700 dark:text-zinc-300">
-                <li>Keep ears directly above shoulders.</li>
-                <li>Keep shoulders level and relaxed.</li>
+                <li>Keep your head lifted at a natural height.</li>
+                <li>Keep shoulders relaxed at your normal upright position.</li>
                 <li>Sit back with a neutral spine.</li>
                 <li>Place the screen at eye level.</li>
                 <li>Keep feet flat on the floor.</li>

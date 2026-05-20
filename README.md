@@ -5,7 +5,7 @@
 ## Features
 
 - 🎯 **Personalized Calibration** — Your baseline is YOUR good posture, with practical tolerance floors to avoid overreacting to webcam jitter.
-- 📐 **4 Posture Measurements** — Shoulder angle, forward head ratio, head tilt, and neck angle.
+- 📐 **Vertical Posture Measurements** — Nose-to-shoulder height and shoulder screen position, both compared against your calibrated baseline.
 - 🎙️ **Two Coach Personalities** — Calm professional or aggressive drill sergeant.
 - 🔒 **100% Local** — Camera feed is processed on-device. Nothing is recorded or transmitted.
 - 📌 **System Tray** — Runs silently in the background with quick tray menu access.
@@ -51,18 +51,16 @@ The Python backend opens the bundled React UI inside the ProPosture desktop wind
 
 1. **Calibrate** — Sit with ideal posture. ProPosture captures 90 frames (3 seconds) to learn your personal baseline, using robust center and jitter estimates so a few noisy frames do not skew the profile.
 
-2. **Monitor** — In the background, each frame is compared to your baseline with measurement-specific tolerance floors. This keeps a very steady calibration from creating tiny thresholds that mark normal webcam jitter as bad posture.
+2. **Monitor** — In the background, each frame is compared to your baseline using vertical screen distances. Thresholds are percentages of your calibrated nose-to-shoulder distance, which keeps posture scoring relative to each person and camera setup.
 
-3. **Alert** — If bad posture persists for a configurable duration (default: 10 seconds), your chosen coach speaks up with specific feedback (e.g., "head too far forward"). Some measurements are directional: improving relative to your calibrated posture does not count as bad.
+3. **Alert** — If bad posture persists for a configurable duration (default: 10 seconds), your chosen coach speaks up with specific feedback (e.g., "lift your head" or "sit up straighter"). Some measurements are directional: improving relative to your calibrated posture does not count as bad.
 
 ## Measurements
 
 | Measurement | What It Detects |
 |---|---|
-| **Shoulder Angle** | Uneven shoulders / slouching to one side |
-| **Forward Head Ratio** | Head jutting forward (most common desk worker issue) |
-| **Head Tilt Angle** | Head tilting sideways |
-| **Neck Angle** | Forward neck flexion |
+| **Nose-Shoulder Gap** | Nose dropping too close to the shoulder line |
+| **Shoulder Height** | Shoulders sitting lower on screen than the calibrated posture |
 
 ## Settings
 
@@ -97,7 +95,7 @@ proposture/
 │   └── icon.png               # App icon
 ├── core/
 │   ├── pose_detector.py       # MediaPipe landmark extraction
-│   ├── posture_analyzer.py    # Angle/distance math
+│   ├── posture_analyzer.py    # Vertical distance posture math
 │   ├── calibration.py         # Calibration session management
 │   ├── alert_engine.py        # Threshold and timing logic
 │   └── startup.py             # Windows/macOS startup integration
