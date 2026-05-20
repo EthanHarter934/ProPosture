@@ -355,7 +355,7 @@ class AppController:
         self._voice_manager.voice_description = voice_description
         self._voice_manager.voice_server_url = voice_server_url
         self._voice_manager.voice_mode = VOICE_MODE_CUSTOM
-        self._voice_manager.speak_text("This is how I'll sound when I coach you.")
+        self._voice_manager.speak_text("This is a preview of my voice. I will be monitoring your posture closely to help you stay aligned and healthy throughout your day.")
         self._voice_manager.voice_description = old_desc
         self._voice_manager.voice_server_url = old_url
         self._voice_manager.voice_mode = old_mode

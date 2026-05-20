@@ -159,41 +159,129 @@ def _preprocess_voice_description(voice_description: str) -> dict[str, Any]:
         return default_res
 
 
+def _adapt_prompts_to_theme(voice_description: str, prompts: dict[str, str]) -> dict[str, str]:
+    """
+    Use Gemini to dynamically rewrite/adapt standard posture alert prompts to fit the theme
+    or personality of the voice description, while retaining the correct corrective instruction.
+    """
+    if not gemini_key:
+        return prompts
+
+    try:
+        model = genai.GenerativeModel("gemini-3.1-flash-lite")
+        
+        prompt = (
+            "You are a creative script writer and dialogue designer for an AI posture coaching app. "
+            "Your task is to take a dictionary of posture correction prompt alerts and rewrite the text of each alert "
+            "to match the theme, personality, or archetype of this voice description: "
+            f"\"{voice_description}\"\n\n"
+            "CRITICAL RULES:\n"
+            "1. You MUST retain the exact same postural correction advice (e.g., if it says to raise the head, "
+            "the adapted alert must still clearly instruct them to raise their head. If it says to sit up/straighten, "
+            "it must still clearly tell them to sit up/adjust shoulders).\n"
+            "2. Keep the responses highly concise, punchy, and clear. Each alert should be a single, short sentence "
+            "of 5 to 15 words so it can be spoken in real time as a voice notification.\n"
+            "3. Inject fitting vocabulary, slang, jargon, tone, and flavor matching the theme (e.g. for a cowboy: "
+            "'partner', 'saddle up', 'chin high like a tall cactus', 'no slacking in the stirrups').\n"
+            "4. Return a JSON object containing the exact same keys as the input, with the modified text as the values.\n\n"
+            f"INPUT DICTIONARY:\n{json.dumps(prompts, indent=2)}\n\n"
+            "Return the output as a valid JSON object matching the input structure exactly."
+        )
+
+        logger.info("Requesting Gemini script theme adaptation for: '%s'", voice_description[:60])
+        response = model.generate_content(
+            prompt,
+            generation_config=genai.GenerationConfig(
+                response_mime_type="application/json"
+            )
+        )
+        
+        import json
+        adapted = json.loads(response.text)
+        
+        # Verify the structure matches the input keys
+        res = {}
+        for k, original_text in prompts.items():
+            res[k] = adapted.get(k, original_text).strip()
+            
+        logger.info("Successfully adapted %d prompts to theme '%s'", len(res), voice_description[:40])
+        return res
+    except Exception:
+        logger.exception("Failed to adapt scripts using Gemini; falling back to original prompts")
+        return prompts
+
+
 def _generate_wav(
     raw_voice_description: str,
     formatted_description: str,
-    text: str,
+    original_text: str,
+    adapted_text: str,
     cfg_value: float = 2.0,
     inference_timesteps: int = 10
 ) -> bytes:
     """
-    Generate a WAV audio file for the given text with the voice description.
+    Generate a WAV audio file for the given text.
 
-    Uses file-based caching to avoid re-generating identical requests.
+    Uses file-based caching. If a reference/test voice WAV is available for this description,
+    uses VoxCPM2's combined continuation and reference cloning mode to ensure absolute vocal
+    consistency. Otherwise, falls back to zero-shot voice design.
     """
-    cache_key = _cache_key(raw_voice_description, text)
+    cache_key = _cache_key(raw_voice_description, original_text)
     cached_path = CACHE_DIR / f"{cache_key}.wav"
 
     if cached_path.exists() and cached_path.stat().st_size > 0:
-        logger.debug("Cache hit for %s: %s", cache_key[:12], text[:40])
+        logger.debug("Cache hit for %s: %s", cache_key[:12], original_text[:40])
         return cached_path.read_bytes()
 
     model = get_model()
 
-    # Format text with voice description in parentheses as VoxCPM2 expects
-    if formatted_description.strip():
-        full_text = f"({formatted_description}){text}"
-        # Set seed deterministically based on raw voice description to ensure identical timbre/personality
-        _set_seed(raw_voice_description)
-    else:
-        full_text = text
+    # Locate the reference test voice WAV file if it was pre-generated
+    test_voice_text_raw = "This is a preview of my voice. I will be monitoring your posture closely to help you stay aligned and healthy throughout your day."
+    test_voice_key = _cache_key(raw_voice_description, test_voice_text_raw)
+    test_voice_path = CACHE_DIR / f"{test_voice_key}.wav"
+    test_voice_txt_path = CACHE_DIR / f"{test_voice_key}.txt"
 
-    logger.info("Generating audio: %s (cfg=%.2f, steps=%d)", full_text[:80], cfg_value, inference_timesteps)
-    wav = model.generate(
-        text=full_text,
-        cfg_value=cfg_value,
-        inference_timesteps=inference_timesteps,
-    )
+    # Read the adapted transcript of the test voice if available
+    if test_voice_txt_path.exists():
+        test_voice_text_adapted = test_voice_txt_path.read_text(encoding="utf-8").strip()
+    else:
+        test_voice_text_adapted = test_voice_text_raw
+
+    if test_voice_path.exists() and original_text != test_voice_text_raw:
+        # Ultimate Voice Cloning mode (isolated reference embedding + seamless continuation prefix)
+        # This forces perfect timbre, articulation, and voice characteristics consistency.
+        logger.info("Generating via VoxCPM2 Combined Voice Cloning using reference: %s", test_voice_path.name)
+        wav = model.generate(
+            text=adapted_text,
+            prompt_text=test_voice_text_adapted,
+            prompt_wav_path=str(test_voice_path),
+            reference_wav_path=str(test_voice_path),
+            cfg_value=cfg_value,
+            inference_timesteps=inference_timesteps,
+        )
+    else:
+        # Zero-shot Voice Design mode (fallback or when generating the test/preview line)
+        if formatted_description.strip():
+            full_text = f"({formatted_description}){adapted_text}"
+            # Set seed deterministically based on raw voice description to ensure identical timbre/personality
+            _set_seed(raw_voice_description)
+        else:
+            full_text = adapted_text
+
+        logger.info("Generating via VoxCPM2 Voice Design: %s (cfg=%.2f, steps=%d)", full_text[:80], cfg_value, inference_timesteps)
+        wav = model.generate(
+            text=full_text,
+            cfg_value=cfg_value,
+            inference_timesteps=inference_timesteps,
+        )
+        
+        # If we just generated the test voice, save its adapted transcript next to it
+        if original_text == test_voice_text_raw:
+            try:
+                test_voice_txt_path.write_text(adapted_text, encoding="utf-8")
+                logger.info("Saved adapted test voice transcript to %s: '%s'", test_voice_txt_path.name, adapted_text)
+            except Exception:
+                logger.exception("Failed to save adapted test voice transcript")
 
     # Save to cache
     import soundfile as sf
@@ -251,12 +339,15 @@ def generate():
     # Preprocess description with Gemini once for the entire batch if generation is required
     if needed:
         prep = _preprocess_voice_description(voice_description)
+        # Adapt all prompts to fit the custom theme/personality
+        adapted_prompts = _adapt_prompts_to_theme(voice_description, prompts)
     else:
         prep = {
             "formatted_description": voice_description,
             "cfg_value": 2.0,
             "inference_timesteps": 10
         }
+        adapted_prompts = prompts
 
     # Generate all audio files
     zip_buffer = io.BytesIO()
@@ -266,7 +357,8 @@ def generate():
                 wav_bytes = _generate_wav(
                     raw_voice_description=voice_description,
                     formatted_description=prep["formatted_description"],
-                    text=text,
+                    original_text=text,
+                    adapted_text=adapted_prompts[key],
                     cfg_value=prep["cfg_value"],
                     inference_timesteps=prep["inference_timesteps"]
                 )
@@ -317,11 +409,16 @@ def generate_single():
     else:
         # Preprocess description using Gemini
         prep = _preprocess_voice_description(voice_description)
+        # Adapt this single text prompt to fit the custom theme/personality
+        adapted_res = _adapt_prompts_to_theme(voice_description, {"single": text})
+        adapted_text = adapted_res.get("single", text)
+        
         try:
             wav_bytes = _generate_wav(
                 raw_voice_description=voice_description,
                 formatted_description=prep["formatted_description"],
-                text=text,
+                original_text=text,
+                adapted_text=adapted_text,
                 cfg_value=prep["cfg_value"],
                 inference_timesteps=prep["inference_timesteps"]
             )
