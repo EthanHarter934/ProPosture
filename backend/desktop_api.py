@@ -52,6 +52,9 @@ class DesktopApi:
     def generate_custom_voice(self, voice_description: str, voice_server_url: str) -> dict[str, Any]:
         return self._controller.generate_custom_voice(voice_description, voice_server_url)
 
+    def generate_custom_voice_test(self, voice_description: str, voice_server_url: str) -> dict[str, Any]:
+        return self._controller.generate_custom_voice_test(voice_description, voice_server_url)
+
     def begin_calibration(self) -> dict[str, Any]:
         return self._controller.begin_calibration()
 

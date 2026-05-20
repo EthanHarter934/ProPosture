@@ -128,6 +128,7 @@ class AppController:
         self._calibration_measurements: dict[str, float] = {}
         self._calibration_stability = 0.0
 
+        self._is_generating_voice = False
         self._active_view = VIEW_CALIBRATION if profile is None else VIEW_DASHBOARD
 
     def state(self) -> dict[str, Any]:
@@ -146,6 +147,7 @@ class AppController:
                     self._current_status,
                     self._current_posture_reason,
                 ),
+                "isGeneratingVoice": self._is_generating_voice,
                 "session": {
                     "elapsed": elapsed,
                     "elapsedLabel": self._format_duration(elapsed),
@@ -222,7 +224,7 @@ class AppController:
             if self._profile is None:
                 self._active_view = VIEW_CALIBRATION
                 return self.state()
-            if self._monitoring:
+            if self._monitoring or self._is_generating_voice:
                 return self.state()
 
             self.stop_calibration_camera()
@@ -345,18 +347,29 @@ class AppController:
         self._voice_manager.voice = old_voice
         return self.state()
 
+    def generate_custom_voice_test(self, voice_description: str, voice_server_url: str) -> dict[str, Any]:
+        """Test the custom voice by playing a single line."""
+        old_desc = self._voice_manager.voice_description
+        old_url = self._voice_manager.voice_server_url
+        old_mode = self._voice_manager.voice_mode
+        self._voice_manager.voice_description = voice_description
+        self._voice_manager.voice_server_url = voice_server_url
+        self._voice_manager.voice_mode = VOICE_MODE_CUSTOM
+        self._voice_manager.speak_text("This is how I'll sound when I coach you.")
+        self._voice_manager.voice_description = old_desc
+        self._voice_manager.voice_server_url = old_url
+        self._voice_manager.voice_mode = old_mode
+        return self.state()
+
     def generate_custom_voice(self, voice_description: str, voice_server_url: str) -> dict[str, Any]:
         """
-        Pre-generate all coach lines using the VoxCPM2 server.
-
-        This downloads audio for every standard coach line so they are cached
-        and ready for instant playback during monitoring.
-
-        Returns the current state with a 'voiceGeneration' key showing progress.
+        Pre-generate all coach lines using the VoxCPM2 server in the background.
         """
         import hashlib
         import json
         import urllib.request
+        import zipfile
+        import io
 
         if not voice_description.strip():
             return {**self.state(), "voiceGeneration": {"error": "Voice description is empty"}}
@@ -364,81 +377,81 @@ class AppController:
         if not voice_server_url.strip():
             voice_server_url = DEFAULT_VOICE_SERVER_URL
 
-        # Collect all unique coach lines
-        all_prompts: dict[str, str] = {}
-        for personality_lines in COACH_LINES.values():
-            for measurement, lines in personality_lines.items():
-                for i, line in enumerate(lines):
-                    key = hashlib.sha256(
-                        f"{voice_description}\0{line}".encode("utf-8")
-                    ).hexdigest()[:16]
-                    all_prompts[key] = line
+        with self._lock:
+            if self._is_generating_voice:
+                return self.state()
+            self._is_generating_voice = True
 
-        # Check which are already cached
-        CUSTOM_VOICE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        needed: dict[str, str] = {}
-        for key, text in all_prompts.items():
-            cache_key = hashlib.sha256(
-                f"{voice_description}\0{text}".encode("utf-8")
-            ).hexdigest()
-            cached_path = CUSTOM_VOICE_CACHE_DIR / f"{cache_key}.wav"
-            if not (cached_path.exists() and cached_path.stat().st_size > 0):
-                needed[key] = text
+        def _bg_generate() -> None:
+            try:
+                # Collect all unique coach lines
+                all_prompts: dict[str, str] = {}
+                for personality_lines in COACH_LINES.values():
+                    for measurement, lines in personality_lines.items():
+                        for i, line in enumerate(lines):
+                            key = hashlib.sha256(
+                                f"{voice_description}\0{line}".encode("utf-8")
+                            ).hexdigest()[:16]
+                            all_prompts[key] = line
 
-        if not needed:
-            logger.info("All custom voice lines already cached")
-            return {**self.state(), "voiceGeneration": {"status": "complete", "cached": len(all_prompts), "generated": 0}}
+                # Check which are already cached
+                CUSTOM_VOICE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+                needed: dict[str, str] = {}
+                for key, text in all_prompts.items():
+                    cache_key = hashlib.sha256(
+                        f"{voice_description}\0{text}".encode("utf-8")
+                    ).hexdigest()
+                    cached_path = CUSTOM_VOICE_CACHE_DIR / f"{cache_key}.wav"
+                    if not (cached_path.exists() and cached_path.stat().st_size > 0):
+                        needed[key] = text
 
-        # Generate via voice server batch endpoint
-        url = f"{voice_server_url.rstrip('/')}/generate"
-        payload = json.dumps({
-            "voice_description": voice_description,
-            "prompts": needed,
-        }).encode("utf-8")
+                if not needed:
+                    logger.info("All custom voice lines already cached")
+                    return
 
-        logger.info("Requesting %d custom voice lines from %s", len(needed), url)
+                # Generate via voice server batch endpoint
+                url = f"{voice_server_url.rstrip('/')}/generate"
+                payload = json.dumps({
+                    "voice_description": voice_description,
+                    "prompts": needed,
+                }).encode("utf-8")
 
-        try:
-            req = urllib.request.Request(
-                url,
-                data=payload,
-                headers={"Content-Type": "application/json"},
-            )
-            with urllib.request.urlopen(req, timeout=600) as response:
-                zip_data = response.read()
-        except Exception as exc:
-            logger.exception("Failed to generate custom voice")
-            return {**self.state(), "voiceGeneration": {"error": str(exc)}}
+                logger.info("Requesting %d custom voice lines from %s", len(needed), url)
 
-        # Extract WAV files from ZIP and save to cache
-        import zipfile
-        import io
+                req = urllib.request.Request(
+                    url,
+                    data=payload,
+                    headers={"Content-Type": "application/json"},
+                )
+                with urllib.request.urlopen(req, timeout=600) as response:
+                    zip_data = response.read()
 
-        generated_count = 0
-        with zipfile.ZipFile(io.BytesIO(zip_data)) as zf:
-            for name in zf.namelist():
-                if not name.endswith(".wav"):
-                    continue
-                zip_key = name[:-4]  # Strip .wav
-                text = needed.get(zip_key, "")
-                if not text:
-                    continue
-                cache_key = hashlib.sha256(
-                    f"{voice_description}\0{text}".encode("utf-8")
-                ).hexdigest()
-                cached_path = CUSTOM_VOICE_CACHE_DIR / f"{cache_key}.wav"
-                cached_path.write_bytes(zf.read(name))
-                generated_count += 1
+                # Extract WAV files from ZIP and save to cache
+                generated_count = 0
+                with zipfile.ZipFile(io.BytesIO(zip_data)) as zf:
+                    for name in zf.namelist():
+                        if not name.endswith(".wav"):
+                            continue
+                        zip_key = name[:-4]  # Strip .wav
+                        text = needed.get(zip_key, "")
+                        if not text:
+                            continue
+                        cache_key = hashlib.sha256(
+                            f"{voice_description}\0{text}".encode("utf-8")
+                        ).hexdigest()
+                        cached_path = CUSTOM_VOICE_CACHE_DIR / f"{cache_key}.wav"
+                        cached_path.write_bytes(zf.read(name))
+                        generated_count += 1
 
-        logger.info("Generated %d custom voice lines", generated_count)
-        return {
-            **self.state(),
-            "voiceGeneration": {
-                "status": "complete",
-                "cached": len(all_prompts) - len(needed),
-                "generated": generated_count,
-            },
-        }
+                logger.info("Generated %d custom voice lines in background", generated_count)
+            except Exception:
+                logger.exception("Failed to generate custom voice in background")
+            finally:
+                with self._lock:
+                    self._is_generating_voice = False
+
+        threading.Thread(target=_bg_generate, name="VoiceGen-Thread", daemon=True).start()
+        return self.state()
 
     def begin_calibration(self) -> dict[str, Any]:
         """Reset the calibration flow to the education step."""

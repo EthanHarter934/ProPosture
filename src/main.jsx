@@ -13,7 +13,6 @@ import {
   RotateCcw,
   Settings,
   SlidersHorizontal,
-  Sparkles,
   Square,
   SunMoon,
   Trash2,
@@ -62,6 +61,7 @@ const bridgeRoutes = {
   "/api/profile/sensitivity": (bridge, body) => bridge.save_sensitivity(body.measurement, body.value),
   "/api/voice/test": (bridge, body) => bridge.test_voice(body.personality, body.voice),
   "/api/voice/generate": (bridge, body) => bridge.generate_custom_voice(body.voice_description, body.voice_server_url),
+  "/api/voice/generate-test": (bridge, body) => bridge.generate_custom_voice_test(body.voice_description, body.voice_server_url),
   "/api/calibration/start": (bridge) => bridge.begin_calibration(),
   "/api/calibration/preview": (bridge) => bridge.start_calibration_preview(),
   "/api/calibration/capture": (bridge) => bridge.start_calibration_capture(),
@@ -183,9 +183,16 @@ function Header({ state, view, setView, call }) {
 
 function Dashboard({ state, call }) {
   const previewOn = state.settings.show_camera_preview;
+  const isGenVoice = state.isGeneratingVoice;
   return (
     <section className="grid gap-4 lg:grid-cols-[1fr_360px]">
       <div className="space-y-4">
+        {isGenVoice && (
+          <div className="flex items-center gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
+            <Loader2 size={18} className="animate-spin flex-shrink-0" />
+            <span>Building custom voice audio files… Monitoring will be available once processing is complete.</span>
+          </div>
+        )}
         <Panel>
           <div className="flex items-start justify-between gap-4">
             <div>
@@ -193,9 +200,14 @@ function Dashboard({ state, call }) {
               <div className={`mt-2 text-6xl font-bold tracking-normal ${statusClasses[state.postureStatus] || "text-zinc-400"}`}>{state.postureStatus === "No Detection" ? "--" : state.postureStatus}</div>
               <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">{state.postureDetail}</p>
             </div>
-            <button className={state.monitoring ? "danger-button" : "primary-button"} onClick={() => call("/api/monitoring/toggle")}>
-              {state.monitoring ? <Square size={18} /> : <Play size={18} />}
-              {state.monitoring ? "Stop Monitoring" : "Start Monitoring"}
+            <button
+              className={state.monitoring ? "danger-button" : "primary-button"}
+              disabled={isGenVoice && !state.monitoring}
+              title={isGenVoice && !state.monitoring ? "Voice files are still being generated" : ""}
+              onClick={() => call("/api/monitoring/toggle")}
+            >
+              {state.monitoring ? <Square size={18} /> : isGenVoice ? <Loader2 size={18} className="animate-spin" /> : <Play size={18} />}
+              {state.monitoring ? "Stop Monitoring" : isGenVoice ? "Generating Voice…" : "Start Monitoring"}
             </button>
           </div>
         </Panel>
@@ -357,12 +369,12 @@ function SettingsView({ state, call }) {
 
   const [voiceDesc, setVoiceDesc] = useState(settings.voice_description || "");
   const [serverUrl, setServerUrl] = useState(settings.voice_server_url || "http://localhost:5123");
-  const [generating, setGenerating] = useState(false);
-  const [genResult, setGenResult] = useState(null);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState(null);
 
   const isCustom = settings.voice_mode === "custom";
 
-  const handleGenerate = async () => {
+  const handleTestVoice = async () => {
     // Save description + server URL first
     await call("/api/settings", {
       voice_description: voiceDesc,
@@ -370,24 +382,40 @@ function SettingsView({ state, call }) {
       voice_mode: "custom",
     });
 
-    setGenerating(true);
-    setGenResult(null);
+    setTesting(true);
+    setTestResult(null);
     try {
-      const result = await call("/api/voice/generate", {
+      await call("/api/voice/generate-test", {
         voice_description: voiceDesc,
         voice_server_url: serverUrl,
       });
-      setGenResult(result?.voiceGeneration || { status: "complete" });
+      setTestResult({ status: "complete" });
     } catch (err) {
-      setGenResult({ error: err.message });
+      setTestResult({ error: err.message });
     } finally {
-      setGenerating(false);
+      setTesting(false);
     }
+  };
+
+  const handleBackToDashboard = async () => {
+    // If custom voice mode is active and we have a description, kick off background batch generation
+    if (isCustom && voiceDesc.trim()) {
+      await call("/api/settings", {
+        voice_description: voiceDesc,
+        voice_server_url: serverUrl,
+        voice_mode: "custom",
+      });
+      call("/api/voice/generate", {
+        voice_description: voiceDesc,
+        voice_server_url: serverUrl,
+      });
+    }
+    call("/api/view", { view: "dashboard" });
   };
 
   return (
     <section className="space-y-4">
-      <BackButton onClick={() => call("/api/view", { view: "dashboard" })} />
+      <BackButton onClick={handleBackToDashboard} />
       <div className="grid gap-4 lg:grid-cols-2">
         <Panel>
           <SectionTitle icon={Mic} title="Voice" />
@@ -438,24 +466,27 @@ function SettingsView({ state, call }) {
               </Field>
               <div className="mt-4">
                 <button
-                  id="generate-voice-button"
+                  id="test-voice-button"
                   className="primary-button w-full disabled:cursor-not-allowed disabled:opacity-50"
-                  disabled={generating || !voiceDesc.trim()}
-                  onClick={handleGenerate}
+                  disabled={testing || !voiceDesc.trim()}
+                  onClick={handleTestVoice}
                 >
-                  {generating ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
-                  {generating ? "Generating Voice…" : "Generate Voice"}
+                  {testing ? <Loader2 size={18} className="animate-spin" /> : <Volume2 size={18} />}
+                  {testing ? "Testing Voice…" : "Test Voice"}
                 </button>
+                <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+                  Generates a single test line. Full voice lines will be built automatically when you return to the dashboard.
+                </p>
               </div>
-              {genResult && (
+              {testResult && (
                 <div className={`mt-3 rounded-md border px-3 py-2 text-sm ${
-                  genResult.error
+                  testResult.error
                     ? "border-rose-300 bg-rose-50 text-rose-700 dark:border-rose-800 dark:bg-rose-950 dark:text-rose-200"
                     : "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-200"
                 }`}>
-                  {genResult.error
-                    ? `Error: ${genResult.error}`
-                    : `✓ Voice generated! ${genResult.generated || 0} new lines created, ${genResult.cached || 0} already cached.`}
+                  {testResult.error
+                    ? `Error: ${testResult.error}`
+                    : `✓ Test voice played! Return to the dashboard to generate all voice lines.`}
                 </div>
               )}
             </>
