@@ -8,9 +8,7 @@ not block the UI or detection threads.
 """
 
 import hashlib
-import io
 import logging
-import os
 import queue
 import random
 import shutil
@@ -368,8 +366,6 @@ class VoiceManager:
     @staticmethod
     def _play_audio(path: Path, volume: float) -> None:
         """Play an audio file using the local platform's available player."""
-        suffix = path.suffix.lower()
-
         if sys.platform == "darwin":
             subprocess.run(["afplay", "-v", str(volume), str(path)], check=True)
             return

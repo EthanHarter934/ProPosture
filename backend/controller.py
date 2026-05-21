@@ -53,6 +53,7 @@ from constants import (
     STATUS_NO_DETECTION,
     STATUS_WARNING,
     STABILITY_THRESHOLD,
+    TARGET_FPS,
     TTS_VOICE_LABELS,
     VOICE_MODE_CUSTOM,
     VOICE_MODE_LABELS,
@@ -74,6 +75,7 @@ logger = logging.getLogger(__name__)
 VIEW_DASHBOARD = "dashboard"
 VIEW_CALIBRATION = "calibration"
 VIEW_SETTINGS = "settings"
+FRAME_DELAY_SEC = 1.0 / TARGET_FPS
 
 
 class AppController:
@@ -227,7 +229,11 @@ class AppController:
             if self._monitoring or self._is_generating_voice:
                 return self.state()
 
-            self.stop_calibration_camera()
+        self.stop_calibration_camera()
+
+        with self._lock:
+            if self._monitoring:
+                return self.state()
             self._monitor_stop.clear()
             self._monitoring = True
             self._session_start = time.time()
@@ -252,9 +258,17 @@ class AppController:
             self._monitoring = False
             self._current_status = STATUS_NO_DETECTION
             self._current_posture_reason = ""
-        if self._monitor_cap is not None:
-            self._monitor_cap.release()
-            self._monitor_cap = None
+
+        thread = self._monitor_thread
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=1.5)
+
+        if thread is None or not thread.is_alive():
+            self._monitor_thread = None
+            if self._monitor_cap is not None:
+                self._monitor_cap.release()
+                self._monitor_cap = None
+
         logger.info("Monitoring stopped")
         return self.state()
 
@@ -562,10 +576,10 @@ class AppController:
                     break
                 ret, frame = self._monitor_cap.read()
                 if not ret:
-                    time.sleep(0.033)
+                    time.sleep(FRAME_DELAY_SEC)
                     continue
                 self._process_monitor_frame(detector, cv2.flip(frame, 1))
-                time.sleep(0.033)
+                time.sleep(FRAME_DELAY_SEC)
         except Exception:
             logger.exception("Monitoring loop error")
         finally:
@@ -576,6 +590,7 @@ class AppController:
                 self._monitor_cap = None
             with self._lock:
                 self._monitoring = False
+                self._monitor_thread = None
 
     def _process_monitor_frame(self, detector: PoseDetector, frame: np.ndarray) -> None:
         landmarks = detector.detect(frame)
@@ -627,9 +642,12 @@ class AppController:
                 self._good_streak_start = time.time()
 
     def _ensure_calibration_camera(self) -> None:
-        if self._calibration_running:
-            return
-        self._calibration_stop.clear()
+        with self._lock:
+            if self._calibration_running:
+                return
+            self._calibration_running = True
+            self._calibration_stop.clear()
+
         self._calibration_thread = threading.Thread(
             target=self._calibration_loop,
             name="Calibration-Thread",
@@ -641,16 +659,15 @@ class AppController:
         try:
             self._calibration_cap = self._open_camera(self._settings.camera_index)
             self._calibration_detector = PoseDetector()
-            self._calibration_running = True
             while not self._calibration_stop.is_set():
                 if self._calibration_cap is None or not self._calibration_cap.isOpened():
                     break
                 ret, frame = self._calibration_cap.read()
                 if not ret:
-                    time.sleep(0.033)
+                    time.sleep(FRAME_DELAY_SEC)
                     continue
                 self._process_calibration_frame(cv2.flip(frame, 1))
-                time.sleep(0.033)
+                time.sleep(FRAME_DELAY_SEC)
         except Exception:
             logger.exception("Calibration loop error")
         finally:
@@ -677,7 +694,7 @@ class AppController:
                 with self._lock:
                     self._calibration_result = result
                     self._calibration_step = 3 if result is not None else 1
-                self.stop_calibration_camera()
+                self._calibration_stop.set()
 
         jpeg = self._encode_jpeg(frame, 420, 315)
         with self._lock:
@@ -685,11 +702,18 @@ class AppController:
 
     def stop_calibration_camera(self) -> None:
         self._calibration_stop.set()
-        self._release_calibration_resources()
+
+        thread = self._calibration_thread
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=1.5)
+
+        if thread is None or not thread.is_alive():
+            self._release_calibration_resources()
 
     def _release_calibration_resources(self) -> None:
         with self._lock:
             self._calibration_running = False
+            self._calibration_thread = None
         if self._calibration_cap is not None:
             self._calibration_cap.release()
             self._calibration_cap = None
@@ -802,8 +826,13 @@ class AppController:
     @staticmethod
     def _open_camera(index: int) -> cv2.VideoCapture:
         if sys.platform == "win32":
-            return cv2.VideoCapture(index, cv2.CAP_DSHOW)
-        return cv2.VideoCapture(index)
+            cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
+        else:
+            cap = cv2.VideoCapture(index)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_FRAME_WIDTH)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_FRAME_HEIGHT)
+        cap.set(cv2.CAP_PROP_FPS, TARGET_FPS)
+        return cap
 
     @staticmethod
     def _data_url(jpeg: Optional[bytes]) -> Optional[str]:

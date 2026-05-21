@@ -1,7 +1,6 @@
 import os
 import time
 from huggingface_hub import snapshot_download
-from huggingface_hub.utils import HfHubHTTPError
 
 # Use the reliable HF mirror to avoid connection resets
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"

@@ -181,7 +181,6 @@ class AlertEngine:
         """
         worst_name: Optional[str] = None
         worst_duration: float = 0.0
-        worst_severity: float = 0.0
 
         for name in ALL_MEASUREMENTS:
             start = self._bad_start_times[name]

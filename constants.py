@@ -81,7 +81,6 @@ REQUIRED_LANDMARKS: list[int] = [
 # ═══════════════════════════════════════════════
 
 MIN_LANDMARK_VISIBILITY: float = 0.6
-POSE_MODEL_COMPLEXITY: int = 1
 POSE_MIN_DETECTION_CONFIDENCE: float = 0.5
 POSE_MIN_TRACKING_CONFIDENCE: float = 0.5
 
@@ -93,7 +92,6 @@ DEFAULT_CAMERA_INDEX: int = 0
 CAMERA_FRAME_WIDTH: int = 640
 CAMERA_FRAME_HEIGHT: int = 480
 TARGET_FPS: int = 30
-FRAME_INTERVAL_MS: int = 1000 // TARGET_FPS  # ~33ms
 
 # ═══════════════════════════════════════════════
 # CALIBRATION
@@ -240,18 +238,6 @@ COACH_LINES: dict[str, dict[str, list[str]]] = {
     },
 }
 
-# ═══════════════════════════════════════════════
-# UI CONSTANTS
-# ═══════════════════════════════════════════════
-
-WINDOW_TITLE: str = f"{APP_NAME} v{APP_VERSION}"
-MAIN_WINDOW_WIDTH: int = 780
-MAIN_WINDOW_HEIGHT: int = 750
-SETTINGS_WINDOW_WIDTH: int = 500
-SETTINGS_WINDOW_HEIGHT: int = 700
-CALIBRATION_WINDOW_WIDTH: int = 750
-CALIBRATION_WINDOW_HEIGHT: int = 700
-
 CAMERA_THUMBNAIL_WIDTH: int = 480
 CAMERA_THUMBNAIL_HEIGHT: int = 360
 
@@ -265,9 +251,6 @@ COLOR_GOOD: str = "#2ecc71"
 COLOR_WARNING: str = "#f39c12"
 COLOR_BAD: str = "#e74c3c"
 COLOR_INACTIVE: str = "#95a5a6"
-COLOR_ACCENT: str = "#4a9eff"
-COLOR_BG_DARK: str = "#1a1a2e"
-COLOR_BG_CARD: str = "#16213e"
 
 # ═══════════════════════════════════════════════
 # WINDOWS STARTUP REGISTRY

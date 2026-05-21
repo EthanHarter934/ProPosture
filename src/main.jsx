@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   ArrowLeft,
@@ -96,8 +96,9 @@ function App() {
 
   const refresh = async () => {
     const next = await api("/api/state");
+    setError("");
     setState(next);
-    setView((current) => next.needsCalibration && current === "dashboard" ? "calibration" : current);
+    setView((current) => next.view || (next.needsCalibration && current === "dashboard" ? "calibration" : current));
   };
 
   useEffect(() => {

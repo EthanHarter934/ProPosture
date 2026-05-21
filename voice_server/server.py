@@ -15,17 +15,18 @@ from __future__ import annotations
 import argparse
 import hashlib
 import io
+import json
 import logging
+import os
 import tempfile
 import zipfile
 from pathlib import Path
 from typing import Any
 
+import google.generativeai as genai
 from flask import Flask, jsonify, request, send_file
 from flask_cors import CORS
 from dotenv import load_dotenv
-import google.generativeai as genai
-import os
 
 load_dotenv()
 
@@ -137,7 +138,6 @@ def _preprocess_voice_description(voice_description: str) -> dict[str, Any]:
             )
         )
         
-        import json
         res = json.loads(response.text)
         
         formatted = res.get("formatted_description", voice_description)
@@ -196,7 +196,6 @@ def _adapt_prompts_to_theme(voice_description: str, prompts: dict[str, str]) -> 
             )
         )
         
-        import json
         adapted = json.loads(response.text)
         
         # Verify the structure matches the input keys
