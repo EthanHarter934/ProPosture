@@ -103,6 +103,7 @@ class AppController:
             voice_mode=settings.voice_mode,
             voice_description=settings.voice_description,
             voice_server_url=settings.voice_server_url,
+            cloned_voice_ref_path=getattr(settings, 'cloned_voice_ref_path', ''),
         )
 
         self._lock = threading.RLock()
@@ -150,6 +151,7 @@ class AppController:
                     self._current_posture_reason,
                 ),
                 "isGeneratingVoice": self._is_generating_voice,
+                "voiceManagerSpeaking": self._voice_manager.is_speaking,
                 "session": {
                     "elapsed": elapsed,
                     "elapsedLabel": self._format_duration(elapsed),
@@ -298,7 +300,32 @@ class AppController:
     def save_settings(self, updates: dict[str, Any]) -> dict[str, Any]:
         """Persist and apply settings updates from the React app."""
         with self._lock:
+            # Handle audio file upload if present
+            if "audio_file_data" in updates and updates.get("audio_file_data"):
+                try:
+                    audio_data_base64 = updates["audio_file_data"]
+                    audio_file_name = updates.get("audio_file_name", "cloned_voice.wav")
+
+                    if isinstance(audio_data_base64, str) and audio_data_base64.startswith("data:"):
+                        # Extract base64 from data URL if needed
+                        audio_data_base64 = audio_data_base64.split(",", 1)[1]
+
+                    audio_bytes = base64.b64decode(audio_data_base64)
+
+                    # Save to custom voice cache directory with a fixed name for voice cloning reference
+                    CUSTOM_VOICE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+                    cloned_voice_ref_path = CUSTOM_VOICE_CACHE_DIR / "cloned_voice_reference.wav"
+                    cloned_voice_ref_path.write_bytes(audio_bytes)
+
+                    logger.info("Saved cloned voice reference audio file: %s", cloned_voice_ref_path)
+                    self._settings.cloned_voice_ref_path = str(cloned_voice_ref_path)
+                except Exception:
+                    logger.exception("Failed to save audio file")
+
             for key, value in updates.items():
+                if key == "audio_file_data":
+                    # Don't persist raw audio data in settings
+                    continue
                 if not hasattr(self._settings, key):
                     continue
                 setattr(self._settings, key, value)
@@ -323,8 +350,10 @@ class AppController:
             self._voice_manager.voice = self._settings.tts_voice
             self._voice_manager.volume = self._settings.volume
             self._voice_manager.voice_mode = self._settings.voice_mode
-            self._voice_manager.voice_description = self._settings.voice_description
+            self._voice_manager.voice_description = self._settings.voice_description or self._settings.character_description
             self._voice_manager.voice_server_url = self._settings.voice_server_url
+            if hasattr(self._settings, 'cloned_voice_ref_path'):
+                self._voice_manager.cloned_voice_ref_path = self._settings.cloned_voice_ref_path
 
         logger.debug("Settings saved and applied")
         return self.state()
@@ -366,13 +395,38 @@ class AppController:
         old_desc = self._voice_manager.voice_description
         old_url = self._voice_manager.voice_server_url
         old_mode = self._voice_manager.voice_mode
+        old_ref = self._voice_manager.cloned_voice_ref_path
+
         self._voice_manager.voice_description = voice_description
         self._voice_manager.voice_server_url = voice_server_url
         self._voice_manager.voice_mode = VOICE_MODE_CUSTOM
+        self._voice_manager.cloned_voice_ref_path = ""
         self._voice_manager.speak_text("This is a preview of my voice. I will be monitoring your posture closely to help you stay aligned and healthy throughout your day.")
         self._voice_manager.voice_description = old_desc
         self._voice_manager.voice_server_url = old_url
         self._voice_manager.voice_mode = old_mode
+        self._voice_manager.cloned_voice_ref_path = old_ref
+        return self.state()
+
+    def test_cloned_voice(self, character_description: str, voice_server_url: str) -> dict[str, Any]:
+        """Test a cloned voice from uploaded audio."""
+        old_desc = self._voice_manager.voice_description
+        old_url = self._voice_manager.voice_server_url
+        old_mode = self._voice_manager.voice_mode
+        old_ref = self._voice_manager.cloned_voice_ref_path
+
+        cloned_voice_ref_path = getattr(self._settings, 'cloned_voice_ref_path', '')
+
+        self._voice_manager.voice_description = character_description
+        self._voice_manager.voice_server_url = voice_server_url
+        self._voice_manager.voice_mode = VOICE_MODE_CUSTOM
+        self._voice_manager.cloned_voice_ref_path = cloned_voice_ref_path
+        self._voice_manager.speak_text("This is a preview of my voice. I will be monitoring your posture closely to help you stay aligned and healthy throughout your day.")
+
+        self._voice_manager.voice_description = old_desc
+        self._voice_manager.voice_server_url = old_url
+        self._voice_manager.voice_mode = old_mode
+        self._voice_manager.cloned_voice_ref_path = old_ref
         return self.state()
 
     def generate_custom_voice(self, voice_description: str, voice_server_url: str) -> dict[str, Any]:
@@ -384,6 +438,7 @@ class AppController:
         import urllib.request
         import zipfile
         import io
+        import tempfile
 
         if not voice_description.strip():
             return {**self.state(), "voiceGeneration": {"error": "Voice description is empty"}}
@@ -395,6 +450,8 @@ class AppController:
             if self._is_generating_voice:
                 return self.state()
             self._is_generating_voice = True
+            voice_source_type = getattr(self._settings, 'voice_source_type', 'description')
+            cloned_voice_ref_path = getattr(self._settings, 'cloned_voice_ref_path', '') if voice_source_type == 'audio' else ''
 
         def _bg_generate() -> None:
             try:
@@ -425,12 +482,20 @@ class AppController:
 
                 # Generate via voice server batch endpoint
                 url = f"{voice_server_url.rstrip('/')}/generate"
-                payload = json.dumps({
+                payload_dict = {
                     "voice_description": voice_description,
                     "prompts": needed,
-                }).encode("utf-8")
+                }
+                # For audio upload mode, pass the reference. For text description,
+                # the server will auto-detect the cached test audio.
+                if voice_source_type == 'audio' and cloned_voice_ref_path:
+                    payload_dict["reference_audio_path"] = cloned_voice_ref_path
 
-                logger.info("Requesting %d custom voice lines from %s", len(needed), url)
+                payload = json.dumps(payload_dict).encode("utf-8")
+
+                generation_mode = "voice cloning" if (voice_source_type == 'audio' and cloned_voice_ref_path) else "auto-detected reference"
+                logger.info("Requesting %d custom voice lines from %s using %s mode",
+                           len(needed), url, generation_mode)
 
                 req = urllib.request.Request(
                     url,
@@ -727,6 +792,9 @@ class AppController:
             "tts_voice": self._settings.tts_voice,
             "voice_mode": self._settings.voice_mode,
             "voice_description": self._settings.voice_description,
+            "voice_source_type": self._settings.voice_source_type,
+            "character_description": self._settings.character_description,
+            "audio_file_name": self._settings.audio_file_name,
             "voice_server_url": self._settings.voice_server_url,
             "alert_delay_sec": self._settings.alert_delay_sec,
             "cooldown_sec": self._settings.cooldown_sec,

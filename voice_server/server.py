@@ -23,10 +23,14 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
-import google.generativeai as genai
 from flask import Flask, jsonify, request, send_file
 from flask_cors import CORS
 from dotenv import load_dotenv
+
+try:
+    import google.generativeai as genai
+except ModuleNotFoundError:
+    genai = None
 
 load_dotenv()
 
@@ -41,7 +45,15 @@ CACHE_DIR = Path(tempfile.gettempdir()) / "voxcpm2_cache"
 
 # Configure Gemini
 gemini_key = os.getenv("GEMINI_API_KEY")
-if gemini_key and gemini_key != "your_gemini_api_key_here":
+if not genai:
+    if gemini_key and gemini_key != "your_gemini_api_key_here":
+        logger.warning(
+            "google-generativeai is not installed, so Gemini preprocessing is disabled even though GEMINI_API_KEY is set."
+        )
+    else:
+        logger.warning("google-generativeai is not installed, so Gemini preprocessing is disabled.")
+    gemini_key = None
+elif gemini_key and gemini_key != "your_gemini_api_key_here":
     try:
         genai.configure(api_key=gemini_key)
         logger.info("Gemini API configured successfully")
@@ -168,8 +180,9 @@ def _adapt_prompts_to_theme(voice_description: str, prompts: dict[str, str]) -> 
         return prompts
 
     try:
+        import json as json_module
         model = genai.GenerativeModel("gemini-3.1-flash-lite")
-        
+
         prompt = (
             "You are a creative script writer and dialogue designer for an AI posture coaching app. "
             "Your task is to take a dictionary of posture correction prompt alerts and rewrite the text of each alert "
@@ -179,12 +192,12 @@ def _adapt_prompts_to_theme(voice_description: str, prompts: dict[str, str]) -> 
             "1. You MUST retain the exact same postural correction advice (e.g., if it says to raise the head, "
             "the adapted alert must still clearly instruct them to raise their head. If it says to sit up/straighten, "
             "it must still clearly tell them to sit up/adjust shoulders).\n"
-            "2. Keep the responses highly concise, punchy, and clear. Each alert should be a single, short sentence "
-            "of 5 to 15 words so it can be spoken in real time as a voice notification.\n"
+            "2. Make each response LONGER and more detailed (15-30 words each) to provide sufficient audio for voice cloning. "
+            "Add descriptive phrases, additional context, or encouragement while maintaining the core instruction.\n"
             "3. Inject fitting vocabulary, slang, jargon, tone, and flavor matching the theme (e.g. for a cowboy: "
             "'partner', 'saddle up', 'chin high like a tall cactus', 'no slacking in the stirrups').\n"
             "4. Return a JSON object containing the exact same keys as the input, with the modified text as the values.\n\n"
-            f"INPUT DICTIONARY:\n{json.dumps(prompts, indent=2)}\n\n"
+            f"INPUT DICTIONARY:\n{json_module.dumps(prompts, indent=2)}\n\n"
             "Return the output as a valid JSON object matching the input structure exactly."
         )
 
@@ -195,14 +208,14 @@ def _adapt_prompts_to_theme(voice_description: str, prompts: dict[str, str]) -> 
                 response_mime_type="application/json"
             )
         )
-        
-        adapted = json.loads(response.text)
-        
+
+        adapted = json_module.loads(response.text)
+
         # Verify the structure matches the input keys
         res = {}
         for k, original_text in prompts.items():
             res[k] = adapted.get(k, original_text).strip()
-            
+
         logger.info("Successfully adapted %d prompts to theme '%s'", len(res), voice_description[:40])
         return res
     except Exception:
@@ -216,14 +229,14 @@ def _generate_wav(
     original_text: str,
     adapted_text: str,
     cfg_value: float = 2.0,
-    inference_timesteps: int = 10
+    inference_timesteps: int = 10,
+    reference_audio_path: str = None,
 ) -> bytes:
     """
     Generate a WAV audio file for the given text.
 
-    Uses file-based caching. If a reference/test voice WAV is available for this description,
-    uses VoxCPM2's combined continuation and reference cloning mode to ensure absolute vocal
-    consistency. Otherwise, falls back to zero-shot voice design.
+    Uses file-based caching. If a reference/cloned audio file is provided, uses it
+    for voice cloning. Otherwise uses zero-shot voice design with the description.
     """
     cache_key = _cache_key(raw_voice_description, original_text)
     cached_path = CACHE_DIR / f"{cache_key}.wav"
@@ -234,32 +247,17 @@ def _generate_wav(
 
     model = get_model()
 
-    # Locate the reference test voice WAV file if it was pre-generated
-    test_voice_text_raw = "This is a preview of my voice. I will be monitoring your posture closely to help you stay aligned and healthy throughout your day."
-    test_voice_key = _cache_key(raw_voice_description, test_voice_text_raw)
-    test_voice_path = CACHE_DIR / f"{test_voice_key}.wav"
-    test_voice_txt_path = CACHE_DIR / f"{test_voice_key}.txt"
-
-    # Read the adapted transcript of the test voice if available
-    if test_voice_txt_path.exists():
-        test_voice_text_adapted = test_voice_txt_path.read_text(encoding="utf-8").strip()
-    else:
-        test_voice_text_adapted = test_voice_text_raw
-
-    if test_voice_path.exists() and original_text != test_voice_text_raw:
-        # Ultimate Voice Cloning mode (isolated reference embedding + seamless continuation prefix)
-        # This forces perfect timbre, articulation, and voice characteristics consistency.
-        logger.info("Generating via VoxCPM2 Combined Voice Cloning using reference: %s", test_voice_path.name)
+    if reference_audio_path and Path(reference_audio_path).exists():
+        # Voice cloning mode using uploaded reference audio
+        logger.info("Generating via VoxCPM2 Voice Cloning using reference: %s", reference_audio_path)
         wav = model.generate(
             text=adapted_text,
-            prompt_text=test_voice_text_adapted,
-            prompt_wav_path=str(test_voice_path),
-            reference_wav_path=str(test_voice_path),
+            reference_wav_path=reference_audio_path,
             cfg_value=cfg_value,
             inference_timesteps=inference_timesteps,
         )
     else:
-        # Zero-shot Voice Design mode (fallback or when generating the test/preview line)
+        # Zero-shot Voice Design mode (fallback or for description-based generation)
         if formatted_description.strip():
             full_text = f"({formatted_description}){adapted_text}"
             # Set seed deterministically based on raw voice description to ensure identical timbre/personality
@@ -273,14 +271,6 @@ def _generate_wav(
             cfg_value=cfg_value,
             inference_timesteps=inference_timesteps,
         )
-        
-        # If we just generated the test voice, save its adapted transcript next to it
-        if original_text == test_voice_text_raw:
-            try:
-                test_voice_txt_path.write_text(adapted_text, encoding="utf-8")
-                logger.info("Saved adapted test voice transcript to %s: '%s'", test_voice_txt_path.name, adapted_text)
-            except Exception:
-                logger.exception("Failed to save adapted test voice transcript")
 
     # Save to cache
     import soundfile as sf
@@ -306,7 +296,8 @@ def generate():
         "prompts": {
             "prompt_key_1": "Text to speak for prompt 1",
             "prompt_key_2": "Text to speak for prompt 2"
-        }
+        },
+        "reference_audio_path": "/path/to/reference/audio.wav" (optional for voice cloning)
     }
 
     Returns: ZIP file containing WAV files named by prompt key.
@@ -314,6 +305,7 @@ def generate():
     data = request.get_json(force=True)
     voice_description = data.get("voice_description", "").strip()
     prompts = data.get("prompts", {})
+    reference_audio_path = (data.get("reference_audio_path") or "").strip()
 
     if not prompts:
         return jsonify({"error": "No prompts provided"}), 400
@@ -322,9 +314,11 @@ def generate():
         return jsonify({"error": "No voice_description provided"}), 400
 
     logger.info(
-        "Generate request: %d prompts, voice='%s'",
+        "Generate request: %d prompts, voice='%s', reference_audio_path='%s'%s",
         len(prompts),
         voice_description[:60],
+        reference_audio_path[:60] if reference_audio_path else "NONE",
+        f" (reference exists: {Path(reference_audio_path).exists()})" if reference_audio_path else "",
     )
 
     # Check if we have any files that actually need generating (i.e. not in cache)
@@ -334,6 +328,19 @@ def generate():
         cached_path = CACHE_DIR / f"{cache_key}.wav"
         if not (cached_path.exists() and cached_path.stat().st_size > 0):
             needed[key] = text
+
+    # Try to find a cached test audio for this voice_description to use as reference
+    auto_reference_audio_path = ""
+    if not reference_audio_path:
+        test_text = "This is a preview of my voice. I will be monitoring your posture closely to help you stay aligned and healthy throughout your day."
+        test_cache_key = _cache_key(voice_description, test_text)
+        test_audio_path = CACHE_DIR / f"{test_cache_key}.wav"
+        if test_audio_path.exists() and test_audio_path.stat().st_size > 0:
+            auto_reference_audio_path = str(test_audio_path)
+            logger.info("Auto-detected cached test audio for voice cloning: %s", auto_reference_audio_path)
+
+    # Use explicit reference if provided, otherwise use auto-detected one
+    final_reference_audio_path = reference_audio_path or auto_reference_audio_path
 
     # Preprocess description with Gemini once for the entire batch if generation is required
     if needed:
@@ -359,7 +366,8 @@ def generate():
                     original_text=text,
                     adapted_text=adapted_prompts[key],
                     cfg_value=prep["cfg_value"],
-                    inference_timesteps=prep["inference_timesteps"]
+                    inference_timesteps=prep["inference_timesteps"],
+                    reference_audio_path=final_reference_audio_path if final_reference_audio_path else None,
                 )
                 zf.writestr(f"{key}.wav", wav_bytes)
             except Exception:
@@ -383,7 +391,8 @@ def generate_single():
     Request JSON:
     {
         "voice_description": "A warm, friendly male voice",
-        "text": "The text to speak"
+        "text": "The text to speak",
+        "reference_audio_path": "/path/to/reference/audio.wav" (optional for voice cloning)
     }
 
     Returns: WAV audio file.
@@ -391,6 +400,7 @@ def generate_single():
     data = request.get_json(force=True)
     voice_description = data.get("voice_description", "").strip()
     text = data.get("text", "").strip()
+    reference_audio_path = (data.get("reference_audio_path") or "").strip()
 
     if not text:
         return jsonify({"error": "No text provided"}), 400
@@ -411,7 +421,7 @@ def generate_single():
         # Adapt this single text prompt to fit the custom theme/personality
         adapted_res = _adapt_prompts_to_theme(voice_description, {"single": text})
         adapted_text = adapted_res.get("single", text)
-        
+
         try:
             wav_bytes = _generate_wav(
                 raw_voice_description=voice_description,
@@ -419,7 +429,8 @@ def generate_single():
                 original_text=text,
                 adapted_text=adapted_text,
                 cfg_value=prep["cfg_value"],
-                inference_timesteps=prep["inference_timesteps"]
+                inference_timesteps=prep["inference_timesteps"],
+                reference_audio_path=reference_audio_path if reference_audio_path else None,
             )
         except Exception:
             logger.exception("Failed to generate audio")

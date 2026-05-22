@@ -62,6 +62,7 @@ const bridgeRoutes = {
   "/api/voice/test": (bridge, body) => bridge.test_voice(body.personality, body.voice),
   "/api/voice/generate": (bridge, body) => bridge.generate_custom_voice(body.voice_description, body.voice_server_url),
   "/api/voice/generate-test": (bridge, body) => bridge.generate_custom_voice_test(body.voice_description, body.voice_server_url),
+  "/api/voice/test-cloned-voice": (bridge, body) => bridge.test_cloned_voice(body.character_description, body.voice_server_url),
   "/api/calibration/start": (bridge) => bridge.begin_calibration(),
   "/api/calibration/preview": (bridge) => bridge.start_calibration_preview(),
   "/api/calibration/capture": (bridge) => bridge.start_calibration_capture(),
@@ -372,44 +373,183 @@ function SettingsView({ state, call }) {
   const [serverUrl, setServerUrl] = useState(settings.voice_server_url || "http://localhost:5123");
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
+  const [voiceSourceType, setVoiceSourceType] = useState(settings.voice_source_type || "description");
+  const [audioFile, setAudioFile] = useState(null);
+  const [characterDesc, setCharacterDesc] = useState(settings.character_description || "");
+  const [testStatus, setTestStatus] = useState("idle");
 
   const isCustom = settings.voice_mode === "custom";
 
   const handleTestVoice = async () => {
-    // Save description + server URL first
-    await call("/api/settings", {
-      voice_description: voiceDesc,
-      voice_server_url: serverUrl,
-      voice_mode: "custom",
-    });
-
-    setTesting(true);
-    setTestResult(null);
-    try {
-      await call("/api/voice/generate-test", {
-        voice_description: voiceDesc,
-        voice_server_url: serverUrl,
-      });
-      setTestResult({ status: "complete" });
-    } catch (err) {
-      setTestResult({ error: err.message });
-    } finally {
-      setTesting(false);
-    }
-  };
-
-  const handleBackToDashboard = async () => {
-    // If custom voice mode is active and we have a description, kick off background batch generation
-    if (isCustom && voiceDesc.trim()) {
+    if (voiceSourceType === "description") {
+      // Save description + server URL first
       await call("/api/settings", {
         voice_description: voiceDesc,
         voice_server_url: serverUrl,
         voice_mode: "custom",
+        voice_source_type: "description",
       });
-      call("/api/voice/generate", {
-        voice_description: voiceDesc,
+
+      setTesting(true);
+      setTestStatus("generating");
+      setTestResult(null);
+      try {
+        await call("/api/voice/generate-test", {
+          voice_description: voiceDesc,
+          voice_server_url: serverUrl,
+        });
+
+        // Poll for speaking state until audio finishes playing
+        for (let i = 0; i < 200; i++) {
+          const freshState = await api("/api/state");
+          if (freshState?.voiceManagerSpeaking) {
+            setTestStatus("playing");
+          }
+          if (freshState?.voiceManagerSpeaking === false && i > 5) {
+            break;
+          }
+          await new Promise((r) => setTimeout(r, 50));
+        }
+
+        setTestResult({ status: "complete" });
+        setTestStatus("idle");
+      } catch (err) {
+        setTestResult({ error: err.message });
+        setTestStatus("idle");
+      } finally {
+        setTesting(false);
+      }
+    } else {
+      // Audio upload mode
+      if (!audioFile && !settings.audio_file_name) {
+        setTestResult({ error: "Please select an audio file" });
+        return;
+      }
+
+      setTesting(true);
+      setTestStatus("generating");
+      setTestResult(null);
+
+      if (audioFile) {
+        try {
+          const reader = new FileReader();
+          reader.onload = async (e) => {
+            try {
+              // Convert ArrayBuffer to base64
+              const uint8Array = new Uint8Array(e.target.result);
+              let binary = "";
+              for (let i = 0; i < uint8Array.length; i++) {
+                binary += String.fromCharCode(uint8Array[i]);
+              }
+              const audioData = btoa(binary);
+
+              await call("/api/settings", {
+                voice_mode: "custom",
+                voice_source_type: "audio",
+                character_description: characterDesc,
+                voice_server_url: serverUrl,
+                audio_file_data: audioData,
+                audio_file_name: audioFile.name,
+              });
+
+              try {
+                await call("/api/voice/test-cloned-voice", {
+                  character_description: characterDesc,
+                  voice_server_url: serverUrl,
+                });
+
+                // Poll for speaking state until audio finishes playing
+                for (let i = 0; i < 200; i++) {
+                  const freshState = await api("/api/state");
+                  if (freshState?.voiceManagerSpeaking) {
+                    setTestStatus("playing");
+                  }
+                  if (freshState?.voiceManagerSpeaking === false && i > 5) {
+                    break;
+                  }
+                  await new Promise((r) => setTimeout(r, 50));
+                }
+
+                setTestResult({ status: "complete" });
+                setTestStatus("idle");
+              } catch (err) {
+                setTestResult({ error: err.message });
+                setTestStatus("idle");
+              } finally {
+                setTesting(false);
+              }
+            } catch (err) {
+              setTestResult({ error: err.message });
+              setTestStatus("idle");
+              setTesting(false);
+            }
+          };
+          reader.onerror = () => {
+            setTestResult({ error: "Failed to read audio file" });
+            setTestStatus("idle");
+            setTesting(false);
+          };
+          reader.readAsArrayBuffer(audioFile);
+        } catch (err) {
+          setTestResult({ error: err.message });
+          setTestStatus("idle");
+          setTesting(false);
+        }
+      } else {
+        // File already exists on backend, just test with existing settings
+        try {
+          await call("/api/voice/test-cloned-voice", {
+            character_description: characterDesc,
+            voice_server_url: serverUrl,
+          });
+
+          // Poll for speaking state until audio finishes playing
+          for (let i = 0; i < 200; i++) {
+            const freshState = await api("/api/state");
+            if (freshState?.voiceManagerSpeaking) {
+              setTestStatus("playing");
+            }
+            if (freshState?.voiceManagerSpeaking === false && i > 5) {
+              break;
+            }
+            await new Promise((r) => setTimeout(r, 50));
+          }
+
+          setTestResult({ status: "complete" });
+          setTestStatus("idle");
+        } catch (err) {
+          setTestResult({ error: err.message });
+          setTestStatus("idle");
+        } finally {
+          setTesting(false);
+        }
+      }
+    }
+  };
+
+  const handleBackToDashboard = async () => {
+    // If custom voice mode is active, save the current settings
+    if (isCustom) {
+      await call("/api/settings", {
+        voice_description: voiceSourceType === "description" ? voiceDesc : "",
+        character_description: voiceSourceType === "audio" ? characterDesc : "",
         voice_server_url: serverUrl,
+        voice_mode: "custom",
+        voice_source_type: voiceSourceType,
       });
+
+      // Trigger background generation for both modes
+      if (voiceSourceType === "description" && voiceDesc.trim()) {
+        call("/api/voice/generate", {
+          voice_description: voiceDesc,
+          voice_server_url: serverUrl,
+        });
+      } else if (voiceSourceType === "audio" && characterDesc.trim()) {
+        call("/api/voice/generate", {
+          voice_description: characterDesc,
+          voice_server_url: serverUrl,
+        });
+      }
     }
     call("/api/view", { view: "dashboard" });
   };
@@ -441,19 +581,66 @@ function SettingsView({ state, call }) {
             </>
           ) : (
             <>
-              <Field label="Voice Description">
-                <textarea
-                  id="voice-description-input"
-                  className="input min-h-[100px] resize-y"
-                  placeholder="Describe your ideal voice, e.g.: A warm, friendly male voice with a calm and encouraging tone. Speaks at a moderate pace with clear articulation."
-                  value={voiceDesc}
-                  onChange={(e) => setVoiceDesc(e.target.value)}
-                  onBlur={() => call("/api/settings", { voice_description: voiceDesc })}
-                />
-                <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-                  Describe gender, age, tone, pitch, pace, emotion — be as specific as you like.
-                </p>
+              <Field label="Voice Source">
+                <select className="input" value={voiceSourceType} onChange={(e) => setVoiceSourceType(e.target.value)}>
+                  <option value="description">Text Description</option>
+                  <option value="audio">Upload Audio File</option>
+                </select>
               </Field>
+
+              {voiceSourceType === "description" ? (
+                <>
+                  <Field label="Voice Description">
+                    <textarea
+                      id="voice-description-input"
+                      className="input min-h-[100px] resize-y"
+                      placeholder="Describe your ideal voice, e.g.: A warm, friendly male voice with a calm and encouraging tone. Speaks at a moderate pace with clear articulation."
+                      value={voiceDesc}
+                      onChange={(e) => setVoiceDesc(e.target.value)}
+                      onBlur={() => call("/api/settings", { voice_description: voiceDesc })}
+                    />
+                    <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                      Describe gender, age, tone, pitch, pace, emotion — be as specific as you like.
+                    </p>
+                  </Field>
+                </>
+              ) : (
+                <>
+                  <Field label="Audio File">
+                    {settings.audio_file_name ? (
+                      <div className="mb-3 rounded-md border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">
+                        <div className="font-medium">Current file: {settings.audio_file_name}</div>
+                        <p className="mt-1 text-xs">Click below to upload a different file</p>
+                      </div>
+                    ) : null}
+                    <input
+                      id="audio-file-input"
+                      className="input"
+                      type="file"
+                      accept="audio/*"
+                      onChange={(e) => setAudioFile(e.target.files?.[0] || null)}
+                    />
+                    <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                      Upload an audio sample of the voice you want to clone (MP3, WAV, etc.)
+                    </p>
+                  </Field>
+
+                  <Field label="Character Description">
+                    <textarea
+                      id="character-description-input"
+                      className="input min-h-[100px] resize-y"
+                      placeholder="Describe who is in the audio and the voice characteristics, e.g.: A confident female coach with an energetic personality. Uses encouraging language and has a natural speaking pace."
+                      value={characterDesc}
+                      onChange={(e) => setCharacterDesc(e.target.value)}
+                      onBlur={() => call("/api/settings", { character_description: characterDesc })}
+                    />
+                    <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                      Describe the person and voice traits to help Gemini write prompts that match them.
+                    </p>
+                  </Field>
+                </>
+              )}
+
               <Field label="Voice Server URL">
                 <input
                   id="voice-server-url-input"
@@ -469,11 +656,20 @@ function SettingsView({ state, call }) {
                 <button
                   id="test-voice-button"
                   className="primary-button w-full disabled:cursor-not-allowed disabled:opacity-50"
-                  disabled={testing || !voiceDesc.trim()}
+                  disabled={testing || (voiceSourceType === "description" ? !voiceDesc.trim() : (!audioFile && !settings.audio_file_name) || !characterDesc.trim())}
                   onClick={handleTestVoice}
                 >
-                  {testing ? <Loader2 size={18} className="animate-spin" /> : <Volume2 size={18} />}
-                  {testing ? "Testing Voice…" : "Test Voice"}
+                  {testing ? (
+                    <>
+                      <Loader2 size={18} className="animate-spin" />
+                      {testStatus === "generating" ? "Generating test audio…" : "Playing back voice test"}
+                    </>
+                  ) : (
+                    <>
+                      <Volume2 size={18} />
+                      Test Voice
+                    </>
+                  )}
                 </button>
                 <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
                   Generates a single test line. Full voice lines will be built automatically when you return to the dashboard.
@@ -487,7 +683,7 @@ function SettingsView({ state, call }) {
                 }`}>
                   {testResult.error
                     ? `Error: ${testResult.error}`
-                    : `✓ Test voice played! Return to the dashboard to generate all voice lines.`}
+                    : `✓ Test audio generated and played. Return to the dashboard to generate all voice lines.`}
                 </div>
               )}
             </>

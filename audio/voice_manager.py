@@ -49,6 +49,7 @@ class SpeechRequest:
     voice_mode: str = VOICE_MODE_STANDARD
     voice_description: str = ""
     voice_server_url: str = DEFAULT_VOICE_SERVER_URL
+    cloned_voice_ref_path: str = ""
 
 
 class VoiceManager:
@@ -69,6 +70,7 @@ class VoiceManager:
         voice_mode: str = DEFAULT_VOICE_MODE,
         voice_description: str = "",
         voice_server_url: str = DEFAULT_VOICE_SERVER_URL,
+        cloned_voice_ref_path: str = "",
     ) -> None:
         """
         Initialize the voice manager.
@@ -80,6 +82,7 @@ class VoiceManager:
             voice_mode: "standard" or "custom".
             voice_description: Natural language voice description for VoxCPM2.
             voice_server_url: URL of the VoxCPM2 voice server.
+            cloned_voice_ref_path: Path to audio file for voice cloning.
         """
         self._personality = personality
         self._voice = self._normalize_voice(voice)
@@ -87,6 +90,7 @@ class VoiceManager:
         self._voice_mode = voice_mode
         self._voice_description = voice_description
         self._voice_server_url = voice_server_url
+        self._cloned_voice_ref_path = cloned_voice_ref_path
         self._speech_queue: queue.Queue[Optional[SpeechRequest]] = queue.Queue(maxsize=5)
         self._is_speaking = threading.Event()
         self._shutdown = threading.Event()
@@ -192,6 +196,19 @@ class VoiceManager:
         logger.info("Voice server URL changed to %s", value)
 
     @property
+    def cloned_voice_ref_path(self) -> str:
+        """Current cloned voice reference audio path."""
+        with self._lock:
+            return self._cloned_voice_ref_path
+
+    @cloned_voice_ref_path.setter
+    def cloned_voice_ref_path(self, value: str) -> None:
+        """Set the cloned voice reference audio path."""
+        with self._lock:
+            self._cloned_voice_ref_path = value
+        logger.info("Cloned voice reference path set to %s", value)
+
+    @property
     def is_speaking(self) -> bool:
         """Whether speech is currently in progress."""
         return self._is_speaking.is_set()
@@ -266,6 +283,7 @@ class VoiceManager:
                 voice_mode=self._voice_mode,
                 voice_description=self._voice_description,
                 voice_server_url=self._voice_server_url,
+                cloned_voice_ref_path=self._cloned_voice_ref_path,
             )
 
         try:
@@ -331,12 +349,13 @@ class VoiceManager:
 
         Calls the voice server's /generate_single endpoint to produce a WAV
         file with the user's custom voice description applied to the text.
+        If a reference audio path is provided, uses it for voice cloning.
         """
         import urllib.request
         import json
 
         cache_key = hashlib.sha256(
-            f"{request.voice_description}\0{request.text}".encode("utf-8")
+            f"{request.voice_description}\0{request.text}\0{request.cloned_voice_ref_path}".encode("utf-8")
         ).hexdigest()
         path = CUSTOM_VOICE_CACHE_DIR / f"{cache_key}.wav"
 
@@ -344,10 +363,15 @@ class VoiceManager:
             return path
 
         url = f"{request.voice_server_url}/generate_single"
-        payload = json.dumps({
+        payload_dict = {
             "voice_description": request.voice_description,
             "text": request.text,
-        }).encode("utf-8")
+        }
+
+        if request.cloned_voice_ref_path:
+            payload_dict["reference_audio_path"] = request.cloned_voice_ref_path
+
+        payload = json.dumps(payload_dict).encode("utf-8")
 
         req = urllib.request.Request(
             url,

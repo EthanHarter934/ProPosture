@@ -68,6 +68,10 @@ class AppSettings:
         tts_voice: Current gTTS voice/accent key.
         voice_mode: "standard" for gTTS or "custom" for VoxCPM2.
         voice_description: Natural language description for VoxCPM2 voice.
+        voice_source_type: "description" for text or "audio" for voice cloning.
+        character_description: Description of the character in uploaded audio.
+        audio_file_data: Base64-encoded audio file data for voice cloning.
+        audio_file_name: Name of the uploaded audio file.
         voice_server_url: URL of the VoxCPM2 voice generation server.
         alert_delay_sec: Seconds of bad posture before alert.
         cooldown_sec: Minimum seconds between alerts.
@@ -83,6 +87,11 @@ class AppSettings:
     tts_voice: str = DEFAULT_TTS_VOICE
     voice_mode: str = DEFAULT_VOICE_MODE
     voice_description: str = DEFAULT_VOICE_DESCRIPTION
+    voice_source_type: str = "description"
+    character_description: str = ""
+    audio_file_data: str = ""
+    audio_file_name: str = ""
+    cloned_voice_ref_path: str = ""
     voice_server_url: str = DEFAULT_VOICE_SERVER_URL
     alert_delay_sec: float = DEFAULT_ALERT_DELAY_SEC
     cooldown_sec: float = DEFAULT_COOLDOWN_SEC
@@ -258,6 +267,10 @@ class ProfileManager:
             tts_voice=tts_voice,
             voice_mode=voice_mode,
             voice_description=data.get("voice_description", defaults.voice_description),
+            voice_source_type=data.get("voice_source_type", defaults.voice_source_type),
+            character_description=data.get("character_description", defaults.character_description),
+            audio_file_name=data.get("audio_file_name", defaults.audio_file_name),
+            cloned_voice_ref_path=data.get("cloned_voice_ref_path", defaults.cloned_voice_ref_path),
             voice_server_url=data.get("voice_server_url", defaults.voice_server_url),
             alert_delay_sec=data.get("alert_delay_sec", defaults.alert_delay_sec),
             cooldown_sec=data.get("cooldown_sec", defaults.cooldown_sec),
@@ -284,6 +297,10 @@ class ProfileManager:
             "tts_voice": settings.tts_voice,
             "voice_mode": settings.voice_mode,
             "voice_description": settings.voice_description,
+            "voice_source_type": settings.voice_source_type,
+            "character_description": settings.character_description,
+            "audio_file_name": settings.audio_file_name,
+            "cloned_voice_ref_path": settings.cloned_voice_ref_path,
             "voice_server_url": settings.voice_server_url,
             "alert_delay_sec": settings.alert_delay_sec,
             "cooldown_sec": settings.cooldown_sec,

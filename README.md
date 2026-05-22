@@ -47,6 +47,9 @@ py -3.11 -m venv venv
 venv\Scripts\activate
 # OR macOS/Linux: source venv/bin/activate
 
+# Verify the interpreter is 3.11.x before installing; using system Python 3.14 will trigger source builds for some VoxCPM2 deps.
+python --version
+
 # 3. Install requirements
 pip install -r requirements.txt
 
@@ -88,10 +91,10 @@ The Python backend opens the bundled React UI inside the ProPosture desktop wind
 
 ## Measurements
 
-| Measurement | What It Detects |
-|---|---|
-| **Nose-Shoulder Gap** | Nose dropping too close to the shoulder line |
-| **Shoulder Height** | Shoulders sitting lower on screen than the calibrated posture |
+| Measurement           | What It Detects                                               |
+| --------------------- | ------------------------------------------------------------- |
+| **Nose-Shoulder Gap** | Nose dropping too close to the shoulder line                  |
+| **Shoulder Height**   | Shoulders sitting lower on screen than the calibrated posture |
 
 ## Settings
 
@@ -173,6 +176,7 @@ All data is stored locally in the OS-specific app data directory:
 - Linux: `${XDG_DATA_HOME:-~/.local/share}/ProPosture/`
 
 Stored files:
+
 - `profile.json` — Calibration baseline and sensitivity settings
 - `settings.json` — App preferences
 - `logs/` — Application logs (retained for 7 days)
