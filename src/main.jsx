@@ -653,24 +653,22 @@ function SettingsView({ state, call }) {
                 />
               </Field>
               <div className="mt-4">
-                <button
-                  id="test-voice-button"
-                  className="primary-button w-full disabled:cursor-not-allowed disabled:opacity-50"
-                  disabled={testing || (voiceSourceType === "description" ? !voiceDesc.trim() : (!audioFile && !settings.audio_file_name) || !characterDesc.trim())}
-                  onClick={handleTestVoice}
-                >
-                  {testing ? (
-                    <>
-                      <Loader2 size={18} className="animate-spin" />
-                      {testStatus === "generating" ? "Generating test audio…" : "Playing back voice test"}
-                    </>
-                  ) : (
-                    <>
-                      <Volume2 size={18} />
-                      Test Voice
-                    </>
-                  )}
-                </button>
+                {testing ? (
+                  <div className="flex items-center justify-center gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
+                    <Loader2 size={20} className="animate-spin flex-shrink-0" />
+                    <span>{testStatus === "generating" ? "Generating test audio…" : "Playing back voice test"}</span>
+                  </div>
+                ) : (
+                  <button
+                    id="test-voice-button"
+                    className="primary-button w-full disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={voiceSourceType === "description" ? !voiceDesc.trim() : (!audioFile && !settings.audio_file_name) || !characterDesc.trim()}
+                    onClick={handleTestVoice}
+                  >
+                    <Volume2 size={18} />
+                    Test Voice
+                  </button>
+                )}
                 <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
                   Generates a single test line. Full voice lines will be built automatically when you return to the dashboard.
                 </p>

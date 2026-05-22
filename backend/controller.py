@@ -446,6 +446,17 @@ class AppController:
         if not voice_server_url.strip():
             voice_server_url = DEFAULT_VOICE_SERVER_URL
 
+        # Check if server is reachable before attempting generation
+        is_healthy, error_msg = self._voice_manager.check_voice_server_health()
+        if not is_healthy:
+            logger.warning("Voice server health check failed: %s", error_msg)
+            return {
+                **self.state(),
+                "voiceGeneration": {
+                    "error": error_msg or "Voice server is not responding. Start the voice server to use custom voices."
+                }
+            }
+
         with self._lock:
             if self._is_generating_voice:
                 return self.state()
@@ -502,7 +513,7 @@ class AppController:
                     data=payload,
                     headers={"Content-Type": "application/json"},
                 )
-                with urllib.request.urlopen(req, timeout=600) as response:
+                with urllib.request.urlopen(req, timeout=1800) as response:
                     zip_data = response.read()
 
                 # Extract WAV files from ZIP and save to cache
@@ -804,6 +815,7 @@ class AppController:
             "show_camera_preview": self._settings.show_camera_preview,
             "hotkey": self._settings.hotkey,
             "volume": self._settings.volume,
+            "voiceServerHealthy": self._check_voice_server_if_custom(),
         }
 
     def _profile_payload(self) -> Optional[dict[str, Any]]:
@@ -901,6 +913,13 @@ class AppController:
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_FRAME_HEIGHT)
         cap.set(cv2.CAP_PROP_FPS, TARGET_FPS)
         return cap
+
+    def _check_voice_server_if_custom(self) -> bool:
+        """Check if voice server is healthy when custom voice mode is enabled."""
+        if self._settings.voice_mode != VOICE_MODE_CUSTOM:
+            return True
+        is_healthy, _ = self._voice_manager.check_voice_server_health()
+        return is_healthy
 
     @staticmethod
     def _data_url(jpeg: Optional[bytes]) -> Optional[str]:

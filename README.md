@@ -14,56 +14,46 @@
 
 ## Quick Start
 
+### Prerequisites
+
+- **Python 3.11+** (test with `python --version`)
+- **Node.js and npm** (test with `npm --version`)
+- **Windows only: Microsoft Edge WebView2 Runtime** — [Download](https://developer.microsoft.com/en-us/microsoft-edge/webview2/)
+- **Webcam** and speakers/headphones
+
 ### 1. Clone & Install
 
 ```bash
 git clone <repo-url>
 cd ProPosture
+
+# Create a Python 3.11+ virtual environment
 python3 -m venv .venv
 
+# Activate the virtual environment
 # Windows
 .venv\Scripts\activate
-
 # macOS/Linux
 source .venv/bin/activate
 
+# Install Python dependencies
 python -m pip install --upgrade pip
 pip install -r requirements.txt
+
+# Install and build frontend
 npm install
 npm run build
 ```
 
-### 2. Run the VoxCPM2 Voice Server (Optional)
+### 2. Verify the Setup
 
-If you want to use the Custom Voice (VoxCPM2) feature, you need to run the voice generation server on a CUDA-capable machine. This only needs to be run once and can be hosted on a separate machine if needed.
+Run the verification script to ensure all dependencies are installed correctly:
 
 ```bash
-cd voice_server
-
-# 1. Create a Python 3.11 virtual environment (newer Python versions may fail to install PyTorch/Pythonnet)
-py -3.11 -m venv venv
-
-# 2. Activate the environment (Windows)
-venv\Scripts\activate
-# OR macOS/Linux: source venv/bin/activate
-
-# Verify the interpreter is 3.11.x before installing; using system Python 3.14 will trigger source builds for some VoxCPM2 deps.
-python --version
-
-# 3. Install requirements
-pip install -r requirements.txt
-
-# 4. Configure Gemini Preprocessing (Optional)
-# Create a `.env` file in the `voice_server/` directory and add your key:
-# GEMINI_API_KEY=your_actual_api_key_here
-# The server will automatically use Gemini to optimize your prompts and hyperparameters!
-
-# 5. Pre-download the voice model (this handles network interruptions and resumes broken downloads)
-huggingface-cli download openbmb/VoxCPM2
-
-# 6. Start the server
-python server.py --host 0.0.0.0 --port 5123
+python verify_setup.py
 ```
+
+If verification passes, you're ready to run the app. If any checks fail, follow the error messages to fix them.
 
 ### 3. Run the App
 
@@ -71,12 +61,51 @@ python server.py --host 0.0.0.0 --port 5123
 python main.py
 ```
 
-The Python backend opens the bundled React UI inside the ProPosture desktop window. On first launch, the **Calibration Wizard** guides you through setting your personal posture baseline. If the app reports that the frontend build is missing, run `npm run build` again from the repository root.
+The Python backend opens the bundled React UI inside the ProPosture desktop window. On first launch, the **Calibration Wizard** guides you through setting your personal posture baseline.
 
-### 4. Use
+⚠️ **Note:** If you set voice mode to "Custom Voice (VoxCPM2)", the app will warn you if the voice server is not running.
+
+### 4. (Optional) Run the VoxCPM2 Voice Server
+
+To use the **Custom Voice (VoxCPM2)** feature, you need to run the voice generation server. This is optional and only required if you want custom voice generation. The server runs on a CUDA-capable machine and can be hosted separately.
+
+```bash
+cd voice_server
+
+# 1. Create a Python 3.11 virtual environment
+#    (Python 3.12+ or 3.10 may fail to install PyTorch/Pythonnet)
+py -3.11 -m venv venv
+
+# 2. Activate the environment
+# Windows
+venv\Scripts\activate
+# OR macOS/Linux
+source venv/bin/activate
+
+# 3. Verify you're using Python 3.11.x
+python --version
+
+# 4. Install dependencies
+pip install -r requirements.txt
+
+# 5. (Optional) Configure Gemini Preprocessing
+# Create a .env file in the voice_server/ directory:
+#   GEMINI_API_KEY=your_actual_api_key_here
+# This allows the server to optimize voice prompts automatically.
+
+# 6. Pre-download the voice model (handles network interruptions)
+huggingface-cli download openbmb/VoxCPM2
+
+# 7. Start the server
+python server.py --host 0.0.0.0 --port 5123
+```
+
+The app will look for the server at `http://localhost:5123` by default. You can change this in **Settings > Voice > Voice Server URL**.
+
+### 5. Usage
 
 - The app monitors your posture via webcam and alerts you with spoken feedback.
-- To use custom voices, go to **Settings > Voice**, select **Custom Voice (VoxCPM2)**, type a voice description, and click **Generate Voice**.
+- To use **custom voices**, go to **Settings > Voice**, select **Custom Voice (VoxCPM2)**, type a voice description, and click **Generate Voice** (requires the voice server running).
 - **Minimize** the window to send it to the system tray.
 - **Right-click the tray icon** for quick access to Pause, Resume, Recalibrate, or Quit.
 - Press **Ctrl+Shift+P** anywhere to toggle pause on platforms supported by the `keyboard` package.
@@ -192,18 +221,28 @@ python build.py
 
 ## Requirements
 
-- Python 3.11+
-- Windows 10/11, macOS, or Linux for development
-- Microsoft Edge WebView2 Runtime on Windows
-- Webcam
-- Speakers or headphones (for voice alerts)
+- **Python 3.11+** (test with `python --version`)
+- **Node.js 14+** and npm
+- **Windows 10/11, macOS, or Linux**
+- **Microsoft Edge WebView2 Runtime** on Windows ([Download](https://developer.microsoft.com/en-us/microsoft-edge/webview2/))
+- **Webcam** and speakers/headphones for voice alerts
+- **CUDA GPU** (optional — only if running the custom voice server locally)
 
 ## Troubleshooting
 
+**Setup Issues**
+
+- Run `python verify_setup.py` to diagnose installation problems.
 - Use the virtual environment's `python` after activation. On some systems, `python` outside the venv may point to Python 2.
-- MediaPipe requires the model file at `assets/pose_landmarker_lite.task`; keep that file in place for development and packaged builds.
-- gTTS needs network access the first time each phrase/voice combination is generated. Generated MP3 files are cached under the local app data directory.
-- If camera preview or monitoring cannot start, try a different camera index in Settings.
+- Ensure WebView2 Runtime is installed on Windows: [Download](https://developer.microsoft.com/en-us/microsoft-edge/webview2/)
+
+**Runtime Issues**
+
+- **"Frontend build is missing"** — Run `npm run build` from the repository root.
+- **Custom Voice not working** — Check that the voice server is running at the configured URL. The app will warn you if it cannot reach the server.
+- **gTTS voice not generating** — Requires network access. Generated MP3 files are cached under the local app data directory for offline use.
+- **Camera not detected** — Try a different camera index in **Settings > Camera**.
+- **MediaPipe model not found** — Ensure `assets/pose_landmarker_lite.task` exists. This file is included in the repository.
 
 ## License
 

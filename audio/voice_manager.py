@@ -208,6 +208,35 @@ class VoiceManager:
             self._cloned_voice_ref_path = value
         logger.info("Cloned voice reference path set to %s", value)
 
+    def check_voice_server_health(self) -> tuple[bool, Optional[str]]:
+        """
+        Check if the custom voice server is reachable and healthy.
+
+        Returns:
+            (is_healthy, error_message) — If healthy, error_message is None.
+        """
+        import urllib.request
+
+        with self._lock:
+            url = self._voice_server_url
+
+        health_url = f"{url}/health"
+        try:
+            with urllib.request.urlopen(health_url, timeout=5) as response:
+                if response.status == 200:
+                    logger.debug("Voice server is healthy at %s", url)
+                    return True, None
+        except Exception as e:
+            msg = (
+                f"Voice server at {url} is not responding. "
+                f"To use custom voices, start the server with: "
+                f"cd voice_server && python server.py"
+            )
+            logger.warning(msg)
+            return False, msg
+
+        return False, f"Voice server at {url} returned unexpected status"
+
     @property
     def is_speaking(self) -> bool:
         """Whether speech is currently in progress."""
@@ -380,12 +409,25 @@ class VoiceManager:
         )
 
         logger.info("Requesting custom voice audio from %s", url)
-        with urllib.request.urlopen(req, timeout=120) as response:
-            wav_data = response.read()
+        try:
+            with urllib.request.urlopen(req, timeout=120) as response:
+                wav_data = response.read()
+        except urllib.error.URLError as e:
+            logger.error(
+                "Voice server unreachable at %s: %s. "
+                "Start the voice server with: cd voice_server && python server.py",
+                url, e
+            )
+            raise RuntimeError(
+                f"Voice server not found at {url}. "
+                "Please start the voice server to use custom voices. "
+                "See README for instructions."
+            ) from e
 
         path.write_bytes(wav_data)
         logger.info("Custom voice audio cached: %s (%d bytes)", path.name, len(wav_data))
         return path
+
 
     @staticmethod
     def _play_audio(path: Path, volume: float) -> None:

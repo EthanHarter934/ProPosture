@@ -70,8 +70,25 @@ def get_model():
     global _model
     if _model is None:
         logger.info("Loading VoxCPM2 model (first request — may take a minute)...")
+        import torch
         from voxcpm import VoxCPM
+
+        # Ensure GPU is used if available
+        if torch.cuda.is_available():
+            logger.info("CUDA device detected: %s", torch.cuda.get_device_name(0))
+            torch.cuda.empty_cache()
+        else:
+            logger.warning("CUDA not available; falling back to CPU (much slower)")
+
         _model = VoxCPM.from_pretrained("openbmb/VoxCPM2", load_denoiser=False)
+
+        # Move model to GPU if available
+        if torch.cuda.is_available():
+            _model = _model.cuda()
+            logger.info("Model loaded to GPU")
+        else:
+            logger.info("Model loaded to CPU")
+
         logger.info("VoxCPM2 model loaded successfully")
     return _model
 
@@ -171,10 +188,15 @@ def _preprocess_voice_description(voice_description: str) -> dict[str, Any]:
         return default_res
 
 
-def _adapt_prompts_to_theme(voice_description: str, prompts: dict[str, str]) -> dict[str, str]:
+def _adapt_prompts_to_theme(voice_description: str, prompts: dict[str, str], script_length: str = "normal") -> dict[str, str]:
     """
     Use Gemini to dynamically rewrite/adapt standard posture alert prompts to fit the theme
     or personality of the voice description, while retaining the correct corrective instruction.
+
+    Args:
+        voice_description: Description of the desired voice characteristics
+        prompts: Dictionary of text prompts to adapt
+        script_length: "test" (15-30 words), "short" (10-15 words), or "normal" (15-30 words)
     """
     if not gemini_key:
         return prompts
@@ -182,6 +204,13 @@ def _adapt_prompts_to_theme(voice_description: str, prompts: dict[str, str]) -> 
     try:
         import json as json_module
         model = genai.GenerativeModel("gemini-3.1-flash-lite")
+
+        # Determine word count guidance based on script_length
+        length_guidance = {
+            "test": "15-30 words each (this is a test line for voice quality assessment)",
+            "short": "10-15 words each (keep these short and punchy)",
+            "normal": "15-30 words each (provide sufficient audio for natural-sounding voice)"
+        }.get(script_length, "15-30 words each")
 
         prompt = (
             "You are a creative script writer and dialogue designer for an AI posture coaching app. "
@@ -192,7 +221,7 @@ def _adapt_prompts_to_theme(voice_description: str, prompts: dict[str, str]) -> 
             "1. You MUST retain the exact same postural correction advice (e.g., if it says to raise the head, "
             "the adapted alert must still clearly instruct them to raise their head. If it says to sit up/straighten, "
             "it must still clearly tell them to sit up/adjust shoulders).\n"
-            "2. Make each response LONGER and more detailed (15-30 words each) to provide sufficient audio for voice cloning. "
+            f"2. Make each response {length_guidance}. "
             "Add descriptive phrases, additional context, or encouragement while maintaining the core instruction.\n"
             "3. Inject fitting vocabulary, slang, jargon, tone, and flavor matching the theme (e.g. for a cowboy: "
             "'partner', 'saddle up', 'chin high like a tall cactus', 'no slacking in the stirrups').\n"
@@ -345,8 +374,8 @@ def generate():
     # Preprocess description with Gemini once for the entire batch if generation is required
     if needed:
         prep = _preprocess_voice_description(voice_description)
-        # Adapt all prompts to fit the custom theme/personality
-        adapted_prompts = _adapt_prompts_to_theme(voice_description, prompts)
+        # Adapt all prompts to fit the custom theme/personality (full scripts use normal format)
+        adapted_prompts = _adapt_prompts_to_theme(voice_description, prompts, script_length="normal")
     else:
         prep = {
             "formatted_description": voice_description,
@@ -418,8 +447,8 @@ def generate_single():
     else:
         # Preprocess description using Gemini
         prep = _preprocess_voice_description(voice_description)
-        # Adapt this single text prompt to fit the custom theme/personality
-        adapted_res = _adapt_prompts_to_theme(voice_description, {"single": text})
+        # Adapt this single text prompt to fit the custom theme/personality (test voice uses longer format)
+        adapted_res = _adapt_prompts_to_theme(voice_description, {"single": text}, script_length="test")
         adapted_text = adapted_res.get("single", text)
 
         try:
