@@ -69,6 +69,12 @@ The Python backend opens the bundled React UI inside the ProPosture desktop wind
 
 To use the **Custom Voice (VoxCPM2)** feature, you need to run the voice generation server. This is optional and only required if you want custom voice generation. The server runs on a CUDA-capable machine and can be hosted separately.
 
+Before starting the server, create a `.env` file in `voice_server/` and add your Google API key:
+
+```bash
+GOOGLE_API_KEY=your_actual_api_key_here
+```
+
 ```bash
 cd voice_server
 
