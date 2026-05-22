@@ -101,6 +101,7 @@ class AppSettings:
     show_camera_preview: bool = False
     hotkey: str = DEFAULT_HOTKEY
     volume: float = DEFAULT_VOLUME
+    glassmorphism: bool = True
 
 
 class ProfileManager:
@@ -280,6 +281,7 @@ class ProfileManager:
             show_camera_preview=data.get("show_camera_preview", defaults.show_camera_preview),
             hotkey=data.get("hotkey", defaults.hotkey),
             volume=data.get("volume", defaults.volume),
+            glassmorphism=data.get("glassmorphism", defaults.glassmorphism),
         )
 
     def save_settings(self, settings: AppSettings) -> bool:
@@ -310,6 +312,7 @@ class ProfileManager:
             "show_camera_preview": settings.show_camera_preview,
             "hotkey": settings.hotkey,
             "volume": settings.volume,
+            "glassmorphism": settings.glassmorphism,
         }
         return self._write_json(SETTINGS_PATH, data)
 

@@ -219,8 +219,21 @@ class AppController:
             raise ValueError("Unknown view")
         if view != VIEW_CALIBRATION:
             self.stop_calibration_camera()
+        
+        desc = ""
+        url = ""
         with self._lock:
             self._active_view = view
+            if view == VIEW_DASHBOARD and self._settings.voice_mode == "custom":
+                if getattr(self._settings, "voice_source_type", "description") == "audio":
+                    desc = self._settings.character_description
+                else:
+                    desc = self._settings.voice_description
+                url = self._settings.voice_server_url
+
+        if view == VIEW_DASHBOARD and self._settings.voice_mode == "custom" and desc.strip():
+            self.generate_custom_voice(desc, url)
+
         return self.state()
 
     def start_monitoring(self) -> dict[str, Any]:
@@ -337,6 +350,7 @@ class AppController:
             self._settings.dark_mode = bool(self._settings.dark_mode)
             self._settings.launch_at_startup = bool(self._settings.launch_at_startup)
             self._settings.show_camera_preview = bool(self._settings.show_camera_preview)
+            self._settings.glassmorphism = bool(getattr(self._settings, "glassmorphism", True))
             self._settings.volume = max(0.0, min(1.0, float(self._settings.volume)))
 
             if "launch_at_startup" in updates:
@@ -814,6 +828,7 @@ class AppController:
             "dark_mode": self._settings.dark_mode,
             "launch_at_startup": self._settings.launch_at_startup,
             "show_camera_preview": self._settings.show_camera_preview,
+            "glassmorphism": getattr(self._settings, "glassmorphism", True),
             "hotkey": self._settings.hotkey,
             "volume": self._settings.volume,
         }

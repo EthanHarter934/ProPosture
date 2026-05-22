@@ -68,17 +68,17 @@ def main() -> int:
     # Python dependencies
     print("\nPython Dependencies:")
     deps = {
-        "mediapipe": "Main posture detection library",
-        "gtts": "Standard voice generation",
-        "pywebview": "Desktop UI framework",
-        "pystray": "System tray integration",
-        "Pillow": "Image processing",
-        "opencv-python": "Camera capture",
-        "numpy": "Numerical processing",
+        "mediapipe": ("mediapipe", "Main posture detection library"),
+        "gTTS": ("gtts", "Standard voice generation"),
+        "pywebview": ("webview", "Desktop UI framework"),
+        "pystray": ("pystray", "System tray integration"),
+        "Pillow": ("PIL", "Image processing"),
+        "opencv-python": ("cv2", "Camera capture"),
+        "numpy": ("numpy", "Numerical processing"),
     }
-    for pkg, desc in deps.items():
+    for pkg, (module, desc) in deps.items():
         try:
-            __import__(pkg.replace("-", "_"))
+            __import__(module)
             all_passed &= check(f"{pkg} installed", True)
         except ImportError:
             all_passed &= check(
@@ -160,4 +160,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-
