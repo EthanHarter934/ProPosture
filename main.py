@@ -111,6 +111,7 @@ def main() -> int:
     settings = profile_manager.load_settings()
     profile = profile_manager.load_profile()
     controller = AppController(profile_manager, settings, profile)
+    controller._check_voice_server_on_startup()
 
     if not FRONTEND_INDEX.exists():
         raise FileNotFoundError(

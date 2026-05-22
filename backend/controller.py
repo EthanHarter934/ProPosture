@@ -133,6 +133,7 @@ class AppController:
 
         self._is_generating_voice = False
         self._active_view = VIEW_CALIBRATION if profile is None else VIEW_DASHBOARD
+        self._voice_server_warning_shown = False
 
     def state(self) -> dict[str, Any]:
         """Return a serializable snapshot for the React app."""
@@ -815,7 +816,6 @@ class AppController:
             "show_camera_preview": self._settings.show_camera_preview,
             "hotkey": self._settings.hotkey,
             "volume": self._settings.volume,
-            "voiceServerHealthy": self._check_voice_server_if_custom(),
         }
 
     def _profile_payload(self) -> Optional[dict[str, Any]]:
@@ -920,6 +920,19 @@ class AppController:
             return True
         is_healthy, _ = self._voice_manager.check_voice_server_health()
         return is_healthy
+
+    def _check_voice_server_on_startup(self) -> None:
+        """Background check of voice server health on app startup if using custom voice mode."""
+        def _bg_check() -> None:
+            if self._settings.voice_mode != VOICE_MODE_CUSTOM:
+                return
+            is_healthy, error_msg = self._voice_manager.check_voice_server_health()
+            if not is_healthy and not self._voice_server_warning_shown:
+                with self._lock:
+                    self._voice_server_warning_shown = True
+                logger.warning("Voice server unavailable: %s", error_msg)
+
+        threading.Thread(target=_bg_check, name="VoiceServerCheck-Thread", daemon=True).start()
 
     @staticmethod
     def _data_url(jpeg: Optional[bytes]) -> Optional[str]:

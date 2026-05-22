@@ -94,7 +94,7 @@ pip install -r requirements.txt
 # This allows the server to optimize voice prompts automatically.
 
 # 6. Pre-download the voice model (handles network interruptions)
-huggingface-cli download openbmb/VoxCPM2
+hf download openbmb/VoxCPM2
 
 # 7. Start the server
 python server.py --host 0.0.0.0 --port 5123
